@@ -1,7 +1,7 @@
 // game.js
 // ホーム画面：ターン進行・練習・疲労・怪我（改良3）
 // 目的：疲労が「戦略」になる／怪我が「代償」になる／3回で引退END
-// 追加：1ターン1行動（旧SPRINTERの思想に合わせる）＋ 名前モーダル確実クローズ
+// 追加：1ターンで実行できる行動は1つだけ（次ターンへ以外は1回でロック）
 
 (function () {
   const KEY = "sd_save_v1";
@@ -52,10 +52,8 @@
         campWinter: false,
         allJapanCamp: false,
       },
-      lastEvent: "",
-
-      // ★追加：このターンで行動済みか（1ターン1行動）
-      turnActionUsed: false,
+      lastEvent: "",         // 直近イベント文（怪我など）
+      turnActionUsed: false, // ★追加：このターンで行動済みか（次ターンへ以外）
     };
   }
 
@@ -145,9 +143,7 @@
       rest: "休養",
       next: "次ターンへ",
     };
-    if (window.SD_UI && SD_UI.setSceneTitle) {
-      SD_UI.setSceneTitle(map[menuKey] || "練習");
-    }
+    SD_UI.setSceneTitle(map[menuKey] || "練習");
   }
 
   // 疲労が高いほど伸びが落ちる（最低40%まで）
@@ -184,11 +180,13 @@
     // メニュー強度で補正
     prob *= (MENU_INTENSITY[action] || 1.0);
 
-    // 隠し特性（成長強いほど無理しがち）→怪我率微増
+    // 隠し特性（成長が高いほど無理しがち）→わずかに怪我率UP
     const growth = p.growthTraits?.growth ?? 100;
     prob *= SD_DATA.clamp(0.90 + (growth - 100) * 0.003, 0.85, 1.15);
 
+    // セーフガード
     prob = SD_DATA.clamp(prob, 0, 0.30); // 上限30%
+
     return Math.random() < prob;
   }
 
@@ -207,11 +205,12 @@
     s[a] = clampStat(s[a] - SD_DATA.randInt(4, 9));
     s[b] = clampStat(s[b] - SD_DATA.randInt(4, 9));
 
-    // 怪我後は疲労が中程度に戻る
+    // 怪我後は疲労が強制的に中程度に戻る
     p.fatigue = 62;
 
     state.lastEvent = "怪我をした。";
 
+    // 3回で引退
     if (p.injuryCount >= 3) {
       p.retired = true;
       state.lastEvent = "怪我が重なり、引退となった。";
@@ -224,6 +223,7 @@
 
     const s = p.stats;
 
+    // 練習効果（ベース）
     const base = {
       start:   { ACC: +3, TEC: +2, fatigue: +16, vibe: "スタートの音が、体に入る。" },
       tempo:   { TEC: +3, MEN: +2, fatigue: +12, vibe: "フォームが一瞬だけ“揃う”。" },
@@ -236,15 +236,20 @@
 
     if (!base) return;
 
-    if (window.SD_UI) {
-      SD_UI.setAtmosphereText(atmosphereText(state));
-      SD_UI.setSceneCaption(base.vibe);
-    }
+    // 表示用の雰囲気
+    SD_UI.setAtmosphereText(atmosphereText(state));
+    SD_UI.setSceneCaption(base.vibe);
 
+    // 疲労による練習効率
     const fatigueEff = trainingEfficiencyByFatigue(p.fatigue);
+
+    // 成長特性（0.85〜1.15）
     const growthEff = (p.growthTraits?.growth ?? 100) / 100;
+
+    // 総合倍率：疲労×成長
     const mult = fatigueEff * growthEff;
 
+    // stats update
     if (base.all) {
       for (const k of ["SPD","ACC","POW","TEC","STA","MEN"]) {
         s[k] = clampStat(s[k] + Math.max(0, Math.round(base.all * mult)));
@@ -255,22 +260,25 @@
       }
     }
 
+    // fatigue update
     if (typeof base.fatigue === "number") {
       p.fatigue = SD_DATA.clamp(p.fatigue + base.fatigue, 0, 100);
     }
 
+    // 疲労高×強練習で怪我抽選
     const injured = injuryRoll(state, action);
     if (injured) {
       applyInjury(state);
-      if (window.SD_UI) SD_UI.setSceneCaption("ピキッ…と嫌な感触。胸が冷える。");
+      SD_UI.setSceneCaption("ピキッ…と嫌な感触。胸が冷える。");
     }
 
+    // 疲労100到達でも確定怪我（保険）
     if (!p.retired && p.fatigue >= 100) {
       applyInjury(state);
-      if (window.SD_UI) SD_UI.setSceneCaption("限界を越えた。足が言うことをきかない。");
+      SD_UI.setSceneCaption("限界を越えた。足が言うことをきかない。");
     }
 
-    // チーム波及（軽量）
+    // チーム波及（軽量版）
     const teamMult = 0.30;
     if (!p.retired && action !== "rest") {
       for (const m of state.team) {
@@ -287,99 +295,66 @@
   }
 
   // ----------------------------
-  // Turn Advance（★ここで turnActionUsed をリセット）
+  // Turn Advance
   // ----------------------------
   function advanceTurn(state) {
     if (state.player.retired) return;
 
+    // ★ターン開始：行動未使用に戻す
+    state.turnActionUsed = false;
+
+    // 次大会までカウント
     if (state.nextMeet.turnsLeft > 0) state.nextMeet.turnsLeft -= 1;
 
+    // 年月ターン進行
     state.turn.term += 1;
     if (state.turn.term >= 4) {
       state.turn.term = 1;
       state.turn.month += 1;
 
+      // 年度跨ぎ（簡易）
       if (state.turn.month === 13) {
         state.turn.month = 4;
         state.turn.grade += 1;
         state.player.grade = state.turn.grade;
 
+        // チーム進級（簡易）
         for (const m of state.team) m.grade = Math.min(3, m.grade + 1);
       }
     }
 
-    // ターン開始処理
+    // ターン開始の空気
     state.lastEvent = "";
-    state.turnActionUsed = false; // ★新ターンになったので行動可能に戻す
-
-    if (window.SD_UI) {
-      SD_UI.setCoachLine(coachLineForTurn(state));
-      SD_UI.setAtmosphereText(atmosphereText(state));
-      SD_UI.setSceneCaption(sceneCaption(state));
-    }
+    SD_UI.setCoachLine(coachLineForTurn(state));
+    SD_UI.setAtmosphereText(atmosphereText(state));
+    SD_UI.setSceneCaption(sceneCaption(state));
   }
 
   // ----------------------------
-  // Name Modal（★SD_UI依存を減らして確実に閉じる）
+  // Name Modal
   // ----------------------------
-  function getNameModalEls() {
-    return {
-      back: document.getElementById("nameModalBackdrop"),
-      input: document.getElementById("nameInput"),
-      saveBtn: document.getElementById("nameSaveBtn"),
-      randBtn: document.getElementById("nameRandomBtn"),
-    };
-  }
-
-  function openNameModalDom() {
-    const { back, input } = getNameModalEls();
-    if (back) back.style.display = "flex";
-    if (input) input.focus();
-    document.body.classList.add("modal-open");
-  }
-
-  function closeNameModalDom() {
-    const { back } = getNameModalEls();
-    if (back) back.style.display = "none";
-    document.body.classList.remove("modal-open");
-  }
-
   function showNameModalIfNeeded(state) {
     if (!state.player.name || !state.player.name.trim()) {
-      // SD_UIがあれば使いつつ、無くてもDOMで開く
-      if (window.SD_UI && SD_UI.openNameModal) SD_UI.openNameModal();
-      openNameModalDom();
-
-      // 入力欄に現在値を反映
-      const { input } = getNameModalEls();
-      if (input) input.value = "";
-
+      SD_UI.openNameModal();
       return true;
     }
     return false;
   }
 
   function wireNameModal(state) {
-    const { back, input, saveBtn, randBtn } = getNameModalEls();
-    if (!back || !input || !saveBtn || !randBtn) {
-      // ID不一致の場合はここで止まる。まずHTML側IDを揃える必要あり。
-      console.warn("[NameModal] required elements not found. Check element IDs in index.html");
-      return;
-    }
+    const back = document.getElementById("nameModalBackdrop");
+    const input = document.getElementById("nameInput");
+    const saveBtn = document.getElementById("nameSaveBtn");
+    const randBtn = document.getElementById("nameRandomBtn");
 
     function applyName(name) {
       const n = (name || "").trim().slice(0, 12);
       if (!n) return false;
-
       state.player.name = n;
-
-      if (window.SD_UI) {
-        SD_UI.setPlayerName(n);
-        if (SD_UI.closeNameModal) SD_UI.closeNameModal();
-      }
-      closeNameModalDom();
-
+      SD_UI.setPlayerName(n);
       save(state);
+      SD_UI.closeNameModal();
+      refreshActionButtons(state); // ★名前確定で操作可能に
       return true;
     }
 
@@ -396,41 +371,66 @@
       if (e.key === "Enter") applyName(input.value);
     });
 
-    // 名前必須のため backdrop クリックでは閉じない
     back.addEventListener("click", (e) => {
       if (e.target === back) {
-        // do nothing
+        // 名前必須のため閉じない
       }
     });
   }
 
   // ----------------------------
-  // Actions
+  // Actions Lock / Enable
   // ----------------------------
+  function refreshActionButtons(state) {
+    const hasName = !!(state.player.name && state.player.name.trim());
+    const btns = document.querySelectorAll("button[data-action]");
+    btns.forEach(b => {
+      const a = b.getAttribute("data-action");
+      if (!a) return;
+
+      // 引退は全部無効
+      if (state.player.retired) { b.disabled = true; return; }
+
+      // 名前未設定なら全部無効（モーダルで決めてもらう）
+      if (!hasName) { b.disabled = true; return; }
+
+      // 1ターン1行動：行動済みなら next 以外を無効
+      if (state.turnActionUsed) {
+        b.disabled = (a !== "next");
+        return;
+      }
+
+      // 通常
+      b.disabled = false;
+    });
+  }
+
   function lockActionsIfRetired(state) {
     if (!state.player.retired) return;
+
     const btns = document.querySelectorAll("button[data-action]");
     btns.forEach(b => b.disabled = true);
 
-    if (window.SD_UI) {
-      SD_UI.setCoachLine(coachLineForTurn(state));
-      SD_UI.setSceneCaption("— 引退 END — もう一度走りたくなったら、また最初から。");
-    }
+    SD_UI.setCoachLine(coachLineForTurn(state));
+    SD_UI.setSceneCaption("— 引退 END — もう一度走りたくなったら、また最初から。");
   }
 
-  function refreshUI(state) {
+  function applyUi(state) {
     const t = state.turn;
+    SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
+    SD_UI.setNextMeet(nextMeetText(state));
+    SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
 
-    if (window.SD_UI) {
-      SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
-      SD_UI.setNextMeet(nextMeetText(state));
-      SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
-      SD_UI.renderStats(state.player);
-      SD_UI.renderTeam(state.team);
-      SD_UI.setCoachLine(coachLineForTurn(state));
-    }
+    SD_UI.renderStats(state.player);
+    SD_UI.renderTeam(state.team);
+    SD_UI.setCoachLine(coachLineForTurn(state));
 
     if (window.SD_SCENE) SD_SCENE.setMode(state.selectedMenu);
+
+    refreshActionButtons(state);
+    lockActionsIfRetired(state);
+
+    save(state);
   }
 
   function wireActions(state) {
@@ -439,38 +439,35 @@
       btn.addEventListener("click", () => {
         if (state.player.retired) return;
 
-        // 名前未設定なら先に名前
+        // 名前必須
         if (!state.player.name || !state.player.name.trim()) {
-          showNameModalIfNeeded(state);
+          SD_UI.openNameModal();
+          refreshActionButtons(state);
           return;
         }
 
         const action = btn.getAttribute("data-action");
         if (!action) return;
 
-        // ★1ターン1行動ガード
-        if (state.turnActionUsed) {
-          if (window.SD_UI) SD_UI.setCoachLine("一つずつでいいよ。今のターンはもう行動したね。");
+        // ★1ターン1行動ロック：行動済みなら next 以外は無視
+        if (state.turnActionUsed && action !== "next") {
+          SD_UI.setCoachLine("今日は一本で十分だよ。次のターンでまた積もう。");
+          refreshActionButtons(state);
+          save(state);
           return;
         }
 
-        // 行動したのでロック（同ターンはもう押せない）
-        state.turnActionUsed = true;
-
         if (action === "next") {
-          // 何もしないでターンを進める（これも1行動）
-          setMenu(state, "next");
           advanceTurn(state);
         } else {
-          // 練習/休養/マッサージ などを実行したら、ターン終了として進める
           setMenu(state, action);
           applyTraining(state, action);
-          advanceTurn(state);
+
+          // ★行動したのでロック
+          state.turnActionUsed = true;
         }
 
-        refreshUI(state);
-        lockActionsIfRetired(state);
-        save(state);
+        applyUi(state);
       });
     });
   }
@@ -576,7 +573,6 @@
         : (mode === "tempo") ? 1.25
         : (mode === "start") ? 1.4
         : (mode === "power") ? 1.0
-        : (mode === "next") ? 0.4
         : 1.1;
 
       runner.speed = sp;
@@ -691,32 +687,32 @@
     let state = load();
     if (!state) state = defaultState();
 
-    // 互換（古いセーブに turnActionUsed が無い場合）
+    // 互換：古いセーブに turnActionUsed がない場合
     if (typeof state.turnActionUsed !== "boolean") state.turnActionUsed = false;
 
+    // 初期UI
     const t = state.turn;
-
-    if (window.SD_UI) {
-      SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
-      SD_UI.setNextMeet(nextMeetText(state));
-      SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
-      SD_UI.setCoachLine(coachLineForTurn(state));
-      SD_UI.setAtmosphereText(atmosphereText(state));
-      SD_UI.setSceneCaption(sceneCaption(state));
-    }
+    SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
+    SD_UI.setNextMeet(nextMeetText(state));
+    SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
+    SD_UI.setCoachLine(coachLineForTurn(state));
+    SD_UI.setAtmosphereText(atmosphereText(state));
+    SD_UI.setSceneCaption(sceneCaption(state));
 
     recalcTeamPowers(state);
-    if (window.SD_UI) {
-      SD_UI.renderStats(state.player);
-      SD_UI.renderTeam(state.team);
-    }
+    SD_UI.renderStats(state.player);
+    SD_UI.renderTeam(state.team);
 
+    // scene
     initScene(state);
 
+    // modal
     wireNameModal(state);
     showNameModalIfNeeded(state);
 
+    // actions
     wireActions(state);
+    refreshActionButtons(state);
     lockActionsIfRetired(state);
 
     save(state);
