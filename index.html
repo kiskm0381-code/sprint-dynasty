@@ -40,6 +40,29 @@
   </div>
 
 <script>
+/** =========================
+ *  改良1：名前入力＋保存
+ *  - localStorage に保存
+ *  - ランナー表示に反映
+ * ========================= */
+const STORAGE_KEY = "sprintDynasty_playerName_v1";
+function getPlayerName(){
+  let name = (localStorage.getItem(STORAGE_KEY) || "").trim();
+  if (!name){
+    name = prompt("プレイヤー名を入力してください（後から変更できます）", "ケイスケ") || "";
+    name = name.trim();
+    if (!name) name = "あなた";
+    localStorage.setItem(STORAGE_KEY, name);
+  }
+  return name;
+}
+function setPlayerName(name){
+  localStorage.setItem(STORAGE_KEY, String(name || "あなた").trim() || "あなた");
+}
+
+const playerName = getPlayerName();
+
+/** ========= Canvas ========= **/
 const canvas = document.getElementById("cv");
 const ctx = canvas.getContext("2d");
 const W = canvas.width, H = canvas.height;
@@ -77,7 +100,7 @@ function makeStats(base){
 function buildRunners(){
   const runners = [];
 
-  runners.push({ id:"P001", name:"（あなた）", school:"春風高校", key:true, portrait:"🙂", stats: makeStats(55) });
+  runners.push({ id:"P001", name:playerName, school:"春風高校", key:true, portrait:"🙂", stats: makeStats(55) });
   runners.push({ id:"R_SAME", name:"風間 迅", school:"槍ヶ岳高校", key:true, portrait:"😼", stats: makeStats(60) });
   runners.push({ id:"BOSS", name:"九条 蒼真", school:"富士高校", key:true, portrait:"😤", stats: makeStats(62) });
 
@@ -92,6 +115,7 @@ function buildRunners(){
     runners.push({ id:"M_"+name, name, school, key:false, portrait:"", stats: makeStats(54) });
   }
 
+  // レーンシャッフル
   for (let i=runners.length-1;i>0;i--){
     const j=Math.floor(Math.random()*(i+1));
     [runners[i], runners[j]] = [runners[j], runners[i]];
@@ -104,6 +128,9 @@ function buildRunners(){
     r.v = 0;
     r.done = false;
     r.time = null;
+
+    // アニメ用
+    r.animPhase = rand(0, Math.PI*2);
   });
 
   return runners;
@@ -112,8 +139,8 @@ function buildRunners(){
 let runners = buildRunners();
 
 function calcTargetSpeed(stats){
-  const base = 2.1;
-  const spd = stats.SPD * 0.025;
+  const base = 2.05;
+  const spd = stats.SPD * 0.026;
   const pow = stats.POW * 0.010;
   return base + spd + pow;
 }
@@ -124,7 +151,7 @@ function updateRunner(r, dt){
   const {ACC, TEC, STA, MEN} = r.stats;
   const target = calcTargetSpeed(r.stats);
 
-  const accel = (0.6 + ACC*0.010) * dt;
+  const accel = (0.65 + ACC*0.010) * dt;
 
   const jitterAmp = clamp(0.35 - (MEN*0.002 + TEC*0.001), 0.05, 0.35);
   const jitter = (Math.random()*2-1) * jitterAmp;
@@ -238,91 +265,127 @@ function drawTrack(){
   ctx.fillText("100m", TRACK.left, 46);
 }
 
-/** 四角→人型（ユニフォーム） */
+/** =========================
+ *  走るモーション強化（Canvas描画）
+ *  - 上下バウンス
+ *  - 前傾
+ *  - 腕振り強め
+ *  - 足の踏み替え（接地感）
+ * ========================= */
 function drawRunnerHuman(r, now){
   const laneColor = COLORS[r.lane % COLORS.length];
 
-  // 走る“足/腕”の簡易アニメ（走行中だけ揺らす）
   const running = (state === "running") && !r.done;
-  const phase = running ? (now/120 + r.lane*0.3) : 0; // 速度差っぽさ
+
+  // runner speed factor for animation feel
+  const speed01 = clamp(r.v / 4.0, 0.2, 1.0);
+
+  // phase: move faster with speed
+  const phase = running ? (now/80 * (0.8 + speed01*1.2) + r.animPhase) : r.animPhase;
+
+  // bounce & lean
+  const bounce = running ? Math.sin(phase) * (2.2 + speed01*1.4) : 0;
+  const lean = running ? (0.18 + speed01*0.10) : 0.10; // radians
+
+  // limb swings
   const swing = running ? Math.sin(phase) : 0;
+  const swing2 = running ? Math.sin(phase + Math.PI/2) : 0;
 
-  // 人の基準座標（胴体中心）
-  const x = r.x + 10;
-  const y = r.y + 26;
+  // base body position (center)
+  const cx = r.x + 12;
+  const cy = r.y + 28 + bounce;
 
-  // 影
-  ctx.fillStyle = "rgba(0,0,0,.25)";
+  // shadow (changes with bounce)
+  ctx.fillStyle = "rgba(0,0,0,.28)";
   ctx.beginPath();
-  ctx.ellipse(x+3, y+22, 10, 4, 0, 0, Math.PI*2);
+  ctx.ellipse(cx+4, cy+26, 12 - bounce*0.25, 4 - bounce*0.08, 0, 0, Math.PI*2);
   ctx.fill();
 
-  // 足（2本）
-  ctx.strokeStyle = "rgba(0,0,0,.45)";
-  ctx.lineWidth = 3;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-lean);
+
+  // Legs (two, alternating; one forward, one back)
+  ctx.strokeStyle = "rgba(0,0,0,.55)";
+  ctx.lineWidth = 3.2;
   ctx.lineCap = "round";
-  const legA = swing * 10;
-  const legB = -swing * 10;
 
+  const legSpread = 10 + speed01*6;
+  const kneeLift = 5 + speed01*4;
+
+  // front leg
+  const lf = swing * legSpread;
   ctx.beginPath();
-  ctx.moveTo(x-2, y+14);
-  ctx.lineTo(x-6 + legA*0.15, y+26);
+  ctx.moveTo(-2, 12);
+  ctx.lineTo(-4 + lf*0.18, 22);
+  // foot contact
+  ctx.lineTo(-6 + lf*0.22, 24 + Math.max(0, -swing)*2);
   ctx.stroke();
 
+  // back leg
+  const lb = -swing * legSpread;
   ctx.beginPath();
-  ctx.moveTo(x+2, y+14);
-  ctx.lineTo(x+6 + legB*0.15, y+26);
+  ctx.moveTo( 2, 12);
+  ctx.lineTo( 4 + lb*0.18, 22);
+  ctx.lineTo( 6 + lb*0.22, 24 + Math.max(0, swing)*2);
   ctx.stroke();
 
-  // 胴体（ユニフォーム）
+  // Torso (uniform)
   ctx.fillStyle = laneColor;
-  roundRect(x-8, y-6, 16, 18, 4, true, false);
+  roundRect(-9, -4, 18, 20, 5, true, false);
 
-  // ゼッケン風
-  ctx.fillStyle = "rgba(255,255,255,.85)";
-  roundRect(x-6, y+1, 12, 8, 2, true, false);
+  // bib
+  ctx.fillStyle = "rgba(255,255,255,.88)";
+  roundRect(-7, 5, 14, 9, 2, true, false);
   ctx.fillStyle = "rgba(0,0,0,.65)";
-  ctx.font = "700 8px system-ui";
-  ctx.fillText(String(r.lane+1), x-3, y+8);
+  ctx.font = "700 9px system-ui";
+  ctx.fillText(String(r.lane+1), -2.5, 12);
 
-  // 腕（2本）
-  ctx.strokeStyle = "rgba(0,0,0,.45)";
-  const armA = swing * 10;
-  const armB = -swing * 10;
+  // Arms (stronger swing)
+  ctx.strokeStyle = "rgba(0,0,0,.55)";
+  ctx.lineWidth = 3.0;
 
+  const armSpread = 14 + speed01*8;
+  const a1 = swing2 * armSpread;     // opposite timing
+  const a2 = -swing2 * armSpread;
+
+  // left arm
   ctx.beginPath();
-  ctx.moveTo(x-6, y-2);
-  ctx.lineTo(x-14 + armA*0.25, y+4);
+  ctx.moveTo(-8, 0);
+  ctx.lineTo(-14 + a1*0.20, 6 + (-swing2)*2);
   ctx.stroke();
 
+  // right arm
   ctx.beginPath();
-  ctx.moveTo(x+6, y-2);
-  ctx.lineTo(x+14 + armB*0.25, y+4);
+  ctx.moveTo( 8, 0);
+  ctx.lineTo( 14 + a2*0.20, 6 + (swing2)*2);
   ctx.stroke();
 
-  // 頭
-  ctx.fillStyle = "rgba(255,255,255,.92)";
+  // Head
+  ctx.fillStyle = "rgba(255,255,255,.95)";
   ctx.beginPath();
-  ctx.arc(x, y-14, 6, 0, Math.PI*2);
+  ctx.arc(0, -12 - (running ? Math.max(0, swing)*0.8 : 0), 6.2, 0, Math.PI*2);
   ctx.fill();
   ctx.strokeStyle = "rgba(0,0,0,.25)";
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.4;
   ctx.stroke();
 
-  // ラベル（右側）
+  ctx.restore();
+
+  // label (right side)
   const labelX = TRACK.finishX + 14;
   const labelY = r.y + 25;
 
   ctx.fillStyle = "rgba(0,0,0,.55)";
-  roundRect(labelX-6, labelY-14, 220, 22, 8, true, false);
+  roundRect(labelX-6, labelY-14, 240, 22, 8, true, false);
 
   ctx.fillStyle = "#fff";
   ctx.font = "12px system-ui";
   ctx.fillText(`${r.name}（${r.school}）`, labelX, labelY);
 
-  // 主要人物の吹き出し（いまは絵文字。後で画像に差し替え）
+  // portrait bubble for key characters (emoji for now)
   if (r.key){
-    const bx = r.x + 36;
+    const bx = r.x + 40;
     const by = r.y - 10;
     ctx.fillStyle = "rgba(255,255,255,.92)";
     roundRect(bx, by, 44, 30, 8, true, false);
@@ -372,7 +435,7 @@ function loop(now){
     runners.forEach(r => updateRunner(r, dt));
     if (allDone()){
       state = "finished";
-      btnStart.disabled = true; // 一発勝負なので固定
+      btnStart.disabled = true; // 一発勝負
     }
   }
 
@@ -391,6 +454,19 @@ function startRace(){
 
 btnStart.addEventListener("click", startRace);
 canvas.addEventListener("click", ()=>{ if (state === "idle") startRace(); });
+
+/** 追加：名前を変えたい時の裏コマンド（開発用）
+ *  キーボードがある環境なら N で変更できる
+ */
+window.addEventListener("keydown", (e)=>{
+  if (e.key.toLowerCase() === "n"){
+    const next = (prompt("プレイヤー名を変更します", localStorage.getItem(STORAGE_KEY) || playerName) || "").trim();
+    if (next){
+      setPlayerName(next);
+      location.reload();
+    }
+  }
+});
 </script>
 </body>
 </html>
