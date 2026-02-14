@@ -1,181 +1,168 @@
 // ui.js
+// index.html のDOMに合わせたUI操作一式（モーダルの open/close を hidden 属性で確実に制御）
+
 (function () {
-  function el(id) { return document.getElementById(id); }
+  const $ = (id) => document.getElementById(id);
 
-  function statRow(label, value, pct) {
-    const row = document.createElement("div");
-    row.className = "stat-row";
-
-    const l = document.createElement("div");
-    l.className = "stat-label";
-    l.textContent = label;
-
-    const bar = document.createElement("div");
-    bar.className = "bar";
-    const fill = document.createElement("div");
-    fill.className = "bar-fill";
-    fill.style.width = `${pct}%`;
-    bar.appendChild(fill);
-
-    const n = document.createElement("div");
-    n.className = "stat-num";
-    n.textContent = String(value).padStart(2, " ");
-
-    row.appendChild(l);
-    row.appendChild(bar);
-    row.appendChild(n);
-    return row;
-  }
-
-  function fatigueColorClass(fatigue) {
-    // bar-fill色を JS 側で直接塗る（色指定をCSSに持たせたい場合は後でclass化）
-    if (fatigue >= 70) return "danger";
-    if (fatigue >= 40) return "warn";
-    return "ok";
-  }
-
-  function setFatigueBar(fatigue) {
-    const bar = el("fatigueBar");
-    const v = el("fatigueValue");
-    const note = el("fatigueNote");
-
-    const f = SD_DATA.clamp(Math.round(fatigue), 0, 100);
-    v.textContent = f;
-
-    bar.style.width = `${f}%`;
-
-    // 色味（直接rgbaで入れる）
-    const tone = fatigueColorClass(f);
-    if (tone === "danger") bar.style.background = "rgba(255, 93, 93, 0.75)";
-    else if (tone === "warn") bar.style.background = "rgba(255, 209, 102, 0.70)";
-    else bar.style.background = "rgba(126, 224, 129, 0.65)";
-
-    if (f >= 85) note.textContent = "危険：疲労が高い。無理をすると怪我のリスクが上がる。";
-    else if (f >= 55) note.textContent = "注意：疲労が溜まってきた。休養も戦略。";
-    else note.textContent = "疲労が100%に到達すると怪我をします。";
-  }
-
-  function renderStats(player) {
-    const grid = el("statsGrid");
-    grid.innerHTML = "";
-
-    const s = player.stats;
-    const rows = [
-      ["SPD", s.SPD],
-      ["ACC", s.ACC],
-      ["POW", s.POW],
-      ["TEC", s.TEC],
-      ["STA", s.STA],
-      ["MEN", s.MEN],
-    ];
-
-    for (const [k, val] of rows) {
-      const pct = SD_DATA.clamp(val, 0, 100);
-      grid.appendChild(statRow(k, val, pct));
-    }
-
-    el("injuryText").textContent = `${player.injuryCount} / 3`;
-    setFatigueBar(player.fatigue);
-  }
-
-  function renderTeam(team) {
-    const list = el("teamList");
-    list.innerHTML = "";
-
-    let sum = 0;
-    for (const m of team) sum += m.pow;
-    const avg = team.length ? Math.round(sum / team.length) : 0;
-    el("teamPowerText").textContent = `${avg}`;
-
-    for (const m of team) {
-      const item = document.createElement("div");
-      item.className = "member";
-
-      const icon = document.createElement("div");
-      icon.className = "icon";
-      icon.textContent = m.icon;
-
-      // レアは枠を少し光らせる
-      if (m.rarity === "rare") {
-        icon.style.borderColor = "rgba(247, 201, 72, 0.65)";
-        icon.style.background = "rgba(247, 201, 72, 0.10)";
-      }
-
-      const meta = document.createElement("div");
-      meta.className = "meta";
-
-      const name = document.createElement("div");
-      name.className = "name";
-      name.textContent = m.name;
-
-      const sub = document.createElement("div");
-      sub.className = "sub";
-      const r = m.rarity === "rare" ? "レア" : "通常";
-      sub.textContent = `${m.grade}年 / ${r} / ${m.tag}`;
-
-      meta.appendChild(name);
-      meta.appendChild(sub);
-
-      const pow = document.createElement("div");
-      pow.className = "pow";
-      pow.textContent = String(m.pow);
-
-      item.appendChild(icon);
-      item.appendChild(meta);
-      item.appendChild(pow);
-
-      list.appendChild(item);
-    }
-  }
-
+  // ---- basic setters ----
   function setTurnText(turn) {
-    el("turnBadge").textContent = `${turn.grade}年 ${turn.month}月 ${turn.termLabel}`;
+    // turn: {grade, month, term, termLabel}
+    const el = $("turnBadge");
+    if (!el) return;
+    const termLabel = turn.termLabel || (turn.term === 1 ? "上旬" : turn.term === 2 ? "中旬" : "下旬");
+    el.textContent = `${turn.grade}年 ${turn.month}月 ${termLabel}`;
   }
 
   function setNextMeet(text) {
-    el("nextMeetText").textContent = text;
-  }
-
-  function setCoachLine(text) {
-    el("coachLine").textContent = `「${text}」`;
+    const el = $("nextMeetText");
+    if (!el) return;
+    el.textContent = text;
   }
 
   function setPlayerName(name) {
-    el("playerNameText").textContent = name;
+    const el = $("playerNameText");
+    if (!el) return;
+    el.textContent = name || "（未設定）";
   }
 
-  function setSceneTitle(text) {
-    el("sceneTitle").textContent = text;
+  function setCoachLine(text) {
+    const el = $("coachLine");
+    if (!el) return;
+    el.textContent = text || "";
   }
 
   function setAtmosphereText(text) {
-    el("atmosphereText").textContent = text;
+    const el = $("atmosphereText");
+    if (!el) return;
+    el.textContent = text || "";
   }
 
   function setSceneCaption(text) {
-    el("sceneCaption").textContent = text;
+    const el = $("sceneCaption");
+    if (!el) return;
+    el.textContent = text || "";
   }
 
-  // Modal (name)
+  function setSceneTitle(text) {
+    const el = $("sceneTitle");
+    if (!el) return;
+    el.textContent = text || "";
+  }
+
+  // ---- stats rendering ----
+  function renderStats(player) {
+    // player: {stats, fatigue, injuryCount}
+    const grid = $("statsGrid");
+    if (!grid) return;
+
+    const stats = player.stats || {};
+    const rows = [
+      ["SPD", "スピード", stats.SPD],
+      ["ACC", "加速", stats.ACC],
+      ["POW", "筋力", stats.POW],
+      ["TEC", "技術", stats.TEC],
+      ["STA", "持久", stats.STA],
+      ["MEN", "メンタル", stats.MEN],
+    ];
+
+    grid.innerHTML = rows
+      .map(([k, label, val]) => {
+        const v = Number.isFinite(val) ? val : 0;
+        const pct = Math.max(0, Math.min(100, v));
+        return `
+          <div class="stat-row">
+            <div class="stat-key">${k}</div>
+            <div class="stat-bar"><div class="stat-fill" style="width:${pct}%"></div></div>
+            <div class="stat-val">${v}</div>
+          </div>
+        `;
+      })
+      .join("");
+
+    // fatigue
+    const fv = $("fatigueValue");
+    const fb = $("fatigueBar");
+    const f = Math.max(0, Math.min(100, Math.round(player.fatigue ?? 0)));
+    if (fv) fv.textContent = String(f);
+    if (fb) fb.style.width = `${f}%`;
+
+    // injury
+    const inj = $("injuryText");
+    if (inj) inj.textContent = `${player.injuryCount ?? 0} / 3`;
+  }
+
+  // ---- team rendering ----
+  function renderTeam(team) {
+    const list = $("teamList");
+    if (!list) return;
+
+    const arr = Array.isArray(team) ? team : [];
+    list.innerHTML = arr
+      .map((m, idx) => {
+        const name = m.name || `部員${idx + 1}`;
+        const grade = m.grade ? `${m.grade}年` : "";
+        const rarity = m.rarity === "rare" ? "レア" : "通常";
+        const tag = m.tag || "";
+        const pow = Number.isFinite(m.pow) ? m.pow : 0;
+
+        return `
+          <div class="member">
+            <div class="avatar">${idx + 1}</div>
+            <div class="meta">
+              <div class="name">${name}</div>
+              <div class="sub">${grade} / ${rarity}${tag ? " / " + tag : ""}</div>
+            </div>
+            <div class="pow">${pow}</div>
+          </div>
+        `;
+      })
+      .join("");
+
+    // team power (右上の総合表示を軽く反映)
+    const total = arr.reduce((acc, m) => acc + (Number.isFinite(m.pow) ? m.pow : 0), 0);
+    const tp = $("teamPowerText");
+    if (tp) tp.textContent = `${total}`;
+  }
+
+  // ---- modal control (ここが本命の修正点) ----
   function openNameModal() {
-    const back = el("nameModalBackdrop");
+    const back = $("nameModalBackdrop");
+    const input = $("nameInput");
+    if (!back) return;
+
+    // hidden属性で確実に表示
     back.hidden = false;
-    el("nameInput").focus();
-  }
-  function closeNameModal() {
-    el("nameModalBackdrop").hidden = true;
+
+    // 入力欄フォーカス
+    setTimeout(() => {
+      if (input) input.focus();
+      if (input && input.select) input.select();
+    }, 0);
   }
 
+  function closeNameModal() {
+    const back = $("nameModalBackdrop");
+    const input = $("nameInput");
+    if (!back) return;
+
+    // hidden属性で確実に非表示
+    back.hidden = true;
+
+    // 入力欄のフォーカス解除
+    if (input) input.blur();
+  }
+
+  // ---- expose ----
   window.SD_UI = {
-    renderStats,
-    renderTeam,
     setTurnText,
     setNextMeet,
-    setCoachLine,
     setPlayerName,
-    setSceneTitle,
+    setCoachLine,
     setAtmosphereText,
     setSceneCaption,
+    setSceneTitle,
+    renderStats,
+    renderTeam,
     openNameModal,
     closeNameModal,
   };
