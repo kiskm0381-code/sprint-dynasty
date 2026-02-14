@@ -1,621 +1,610 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Sprint Dynasty MVP</title>
-<style>
-  body { margin:0; background:#1b1f2a; font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; }
-  .wrap { display:flex; justify-content:center; padding:18px; }
-  canvas { background:#0f2a4d; border-radius:16px; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
-  .hud {
-    max-width:1000px; margin:0 auto; color:#eaf2ff; padding:0 18px 18px;
-    display:flex; gap:10px; flex-wrap:wrap; align-items:stretch;
-  }
-  .card {
-    background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.10); border-radius:14px;
-    padding:10px 12px; display:flex; gap:10px; align-items:center;
-    backdrop-filter: blur(6px);
-  }
-  .grow { flex: 1 1 420px; }
-  .col { display:flex; flex-direction:column; gap:8px; min-width: 240px; }
-  button {
-    appearance:none; border:0; border-radius:14px; padding:10px 14px;
-    background:#ffd400; color:#111; font-weight:900; cursor:pointer;
-  }
-  button.secondary { background: rgba(255,255,255,.14); color:#eaf2ff; border:1px solid rgba(255,255,255,.18); font-weight:800; }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  .small { font-size:12px; opacity:.85; }
-  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
-  .tag { font-size:12px; padding:2px 8px; border-radius:999px; background: rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.12); }
-  .coach { align-items:flex-start; }
-  .coach b { display:block; margin-bottom:4px; }
-  .coach .msg { line-height: 1.35; }
-</style>
-</head>
+// game.js
+// ホーム画面：ターン進行・練習・疲労・怪我（MVP骨格の入口）
 
-<body>
-  <div class="wrap">
-    <canvas id="cv" width="1000" height="520"></canvas>
-  </div>
+(function () {
+  const KEY = "sd_save_v1";
 
-  <div class="hud">
-    <div class="card grow coach">
-      <div style="display:flex; gap:10px; align-items:flex-start;">
-        <div class="tag" id="dateTag">1年4月上旬</div>
-        <div>
-          <b>監督（優しい口調）</b>
-          <div class="msg" id="coachMsg">待機中です。まずはスタートしてみましょう。</div>
-          <div class="small" id="eventHint"></div>
-        </div>
-      </div>
-    </div>
+  function defaultState() {
+    // 主人公（初期パラメータはランダム）
+    const rarity = "normal"; // 主人公のレア設定は後で入れても良い（今は隠し特性で差を作る）
+    const stats = SD_DATA.genStatsByGrade(1, rarity);
 
-    <div class="col">
-      <div class="card">
-        <div>
-          <b>100m（MVP）</b>
-          <div class="small">タップでスタート（1回勝負）。やり直しはページ更新。</div>
-        </div>
-      </div>
-
-      <div style="display:flex; gap:10px;">
-        <button id="btnStart" style="flex:1;">スタート</button>
-        <button id="btnNext" class="secondary" style="flex:1;">次のターンへ</button>
-      </div>
-
-      <div class="card mono" id="status">待機中</div>
-    </div>
-  </div>
-
-<script>
-/** =========================
- *  改良1：名前入力＋保存（維持）
- * ========================= */
-const STORAGE_KEY_NAME = "sprintDynasty_playerName_v1";
-function getPlayerName(){
-  let name = (localStorage.getItem(STORAGE_KEY_NAME) || "").trim();
-  if (!name){
-    name = prompt("プレイヤー名を入力してください（後から変更できます）", "ケイスケ") || "";
-    name = name.trim();
-    if (!name) name = "あなた";
-    localStorage.setItem(STORAGE_KEY_NAME, name);
-  }
-  return name;
-}
-function setPlayerName(name){
-  localStorage.setItem(STORAGE_KEY_NAME, String(name || "あなた").trim() || "あなた");
-}
-const playerName = getPlayerName();
-
-/** =========================
- *  改良2：ターン進行＋監督の一言
- *  - 1ヶ月=上旬/中旬/下旬の3ターン
- *  - 大会は「3ターン前」に監督が告知
- * ========================= */
-const STORAGE_KEY_TURN = "sprintDynasty_turnIndex_v1";
-function getTurnIndex(){
-  const v = Number(localStorage.getItem(STORAGE_KEY_TURN) || "0");
-  return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
-}
-function setTurnIndex(v){
-  localStorage.setItem(STORAGE_KEY_TURN, String(Math.max(0, Math.floor(v))));
-}
-let turnIndex = getTurnIndex(); // 0=start: 1年4月上旬
-
-// 3年分：4月(開始)〜翌々年3月
-const MONTHS = ["4月","5月","6月","7月","8月","9月","10月","11月","12月","1月","2月","3月"];
-const TERMS  = ["上旬","中旬","下旬"];
-
-// index -> (year, month, term)
-function getDateLabel(idx){
-  const monthNo = Math.floor(idx/3) % 12;
-  const termNo  = idx % 3;
-  const yearNo  = 1 + Math.floor(Math.floor(idx/3) / 12); // 1〜3
-  const ym = MONTHS[monthNo] || "??月";
-  const tt = TERMS[termNo] || "";
-  return `${yearNo}年${ym}${tt}`;
-}
-function isInRange(idx, startIdx, endIdx){ return idx >= startIdx && idx <= endIdx; }
-
-// 大会（あなたの仕様を反映：アジア大会は10月中旬〜12月上旬、合宿時期も変更済）
-function idxOf(yearNo, monthStr, termStr){
-  const m = MONTHS.indexOf(monthStr);
-  const t = TERMS.indexOf(termStr);
-  if (m < 0 || t < 0) return 0;
-  const monthFromStart = (yearNo-1)*12 + m; // start=Y1 Apr => m=0
-  return monthFromStart*3 + t;
-}
-
-// MVPでは「開催ターン」だけ持っておく（勝敗条件/出場枠は次の改良で実装）
-const EVENTS = [
-  // 1年：判定が必要な大会
-  { id:"Y1_Rookie_District", name:"新人戦 地区大会", when: idxOf(1,"8月","下旬") },
-  { id:"Y1_Rookie_Pref",     name:"新人戦 県大会",   when: idxOf(1,"9月","下旬") },
-  { id:"Y1_Rookie_Block",    name:"新人戦 ブロック大会", when: idxOf(1,"10月","中旬") },
-
-  // 2年：高体連〜（勝ち上がりは次フェーズ）
-  { id:"Y2_Inter_District", name:"高体連 地区大会", when: idxOf(2,"5月","中旬") },
-  { id:"Y2_Rookie_Pref",    name:"新人戦 県大会",   when: idxOf(2,"9月","下旬") },
-  { id:"Y2_Rookie_Block",   name:"新人戦 ブロック大会", when: idxOf(2,"10月","中旬") },
-
-  // 3年：最短終了がある本線（ここも次フェーズで勝敗実装）
-  { id:"Y3_Inter_District", name:"高体連 地区大会", when: idxOf(3,"5月","中旬") },
-];
-
-// 合宿（メニューは次フェーズ。今回は雰囲気メッセージだけ）
-const CAMP = {
-  summer: { name:"夏季合宿", start: idxOf(1,"7月","中旬"), end: idxOf(1,"8月","中旬") },
-  winter: { name:"冬季合宿", start: idxOf(1,"1月","中旬"), end: idxOf(1,"2月","上旬") },
-};
-
-function getUpcomingEvent(idx){
-  // 直近のイベント（今以降で最も近い）
-  const future = EVENTS.filter(e => e.when >= idx).sort((a,b)=>a.when-b.when);
-  return future[0] || null;
-}
-
-function buildCoachMessage(idx){
-  const label = getDateLabel(idx);
-
-  // 合宿中
-  if (isInRange(idx, CAMP.summer.start, CAMP.summer.end)){
     return {
-      title: label,
-      msg: `いまは${CAMP.summer.name}です。普段より伸びますが、疲れが溜まりやすいですよ。`,
-      hint: "（合宿メニューは次の改良で実装します）"
-    };
-  }
-  if (isInRange(idx, CAMP.winter.start, CAMP.winter.end)){
-    return {
-      title: label,
-      msg: `いまは${CAMP.winter.name}です。冬向けの練習で土台を作りましょう。`,
-      hint: "（合宿メニューは次の改良で実装します）"
+      player: {
+        name: "",
+        grade: 1,
+        stats,
+        fatigue: 0,
+        injuryCount: 0,
+        growthTraits: SD_DATA.genGrowthTraits(),
+        formBonusActive: false, // 後で覚醒/フォーム矯正などを入れる
+      },
+      team: SD_DATA.makeTeamMembers(),
+      turn: {
+        grade: 1,
+        month: 4,
+        term: 1, // 1=上旬,2=中旬,3=下旬
+      },
+      selectedMenu: "tempo",
+      nextMeet: {
+        name: "新人戦 地区大会",
+        turnsLeft: 3,
+      },
+      flags: {
+        campSummer: false,
+        campWinter: false,
+        allJapanCamp: false,
+      }
     };
   }
 
-  // 大会3ターン前告知
-  const soon = EVENTS.find(e => e.when - idx === 3);
-  if (soon){
-    return {
-      title: label,
-      msg: `あと3ターンで「${soon.name}」です。調子を上げていきましょう。`,
-      hint: "（出場判定は次の改良で実装します：能力だけで判定）"
+  function termLabel(term) {
+    return term === 1 ? "上旬" : term === 2 ? "中旬" : "下旬";
+  }
+
+  function save(state) {
+    localStorage.setItem(KEY, JSON.stringify(state));
+  }
+
+  function load() {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return null;
+    try {
+      const obj = JSON.parse(raw);
+      return obj;
+    } catch {
+      return null;
+    }
+  }
+
+  function clampStat(v) { return SD_DATA.clamp(Math.round(v), 0, 100); }
+
+  function totalPower(stats) {
+    return SD_DATA.totalPower(stats);
+  }
+
+  function recalcTeamPowers(state) {
+    for (const m of state.team) {
+      m.pow = totalPower(m.stats);
+      m.tag = SD_DATA.personalityTag(m.stats);
+    }
+  }
+
+  function setMenu(state, menuKey) {
+    state.selectedMenu = menuKey;
+    const map = {
+      start: "スタート練習",
+      tempo: "流し（フォーム意識）",
+      power: "筋トレ",
+      core: "体幹",
+      mental: "メンタル",
+      massage: "マッサージ",
+      rest: "休養",
+      next: "次ターンへ",
     };
+    SD_UI.setSceneTitle(map[menuKey] || "練習");
   }
 
-  // 大会当日
-  const today = EVENTS.find(e => e.when === idx);
-  if (today){
-    return {
-      title: label,
-      msg: `今日は「${today.name}」です。落ち着いて、自分の走りをしましょう。`,
-      hint: "（このMVPでは“単発レース”で雰囲気確認します）"
-    };
+  function coachLineForTurn(state) {
+    // 穏やかなおじちゃん先生：優しく、でも具体的
+    const t = state.turn;
+    const meet = state.nextMeet;
+
+    // 大会が近い時は確定で大会コメント
+    if (meet.turnsLeft <= 3 && meet.turnsLeft >= 1) {
+      return `あと${meet.turnsLeft}ターンで${meet.name}だ。今は“積み上げ”の時期だよ。`;
+    }
+    // 疲労による助言
+    const f = state.player.fatigue;
+    if (f >= 80) return "無理は禁物だよ。休むのも立派な練習だ。";
+    if (f >= 55) return "疲れが溜まってきたね。マッサージか休養も考えよう。";
+
+    // 能力の弱点提案
+    const s = state.player.stats;
+    const pairs = Object.entries(s).sort((a,b)=>a[1]-b[1]);
+    const weakest = pairs[0][0];
+    const hint = {
+      SPD:"スピード",
+      ACC:"加速",
+      POW:"筋力",
+      TEC:"技術",
+      STA:"持久",
+      MEN:"メンタル"
+    }[weakest] || "基礎";
+    return `${hint}を少し意識してみようか。焦らなくていい、丁寧にいこう。`;
   }
 
-  // 通常アドバイス（ランダム）
-  const tips = [
-    "スタートと加速が勝負どころです。基礎を丁寧にやりましょう。",
-    "技術を磨くと伸びが安定します。焦らず積み上げましょう。",
-    "筋力は後半の失速を抑えます。土台を作るのも大事ですよ。",
-    "疲れを溜めすぎるとケガに繋がります。休む勇気も必要です。",
-    "大会が近づくほど、やることを絞ると強くなれますよ。",
-  ];
-  const nextEv = getUpcomingEvent(idx);
-  const msg = tips[Math.floor(Math.random()*tips.length)];
-  const hint = nextEv ? `次の大会：${getDateLabel(nextEv.when)}「${nextEv.name}」` : "次の大会は未定です。";
-
-  return { title: label, msg, hint };
-}
-
-/** ========= Canvas ========= **/
-const dateTag = document.getElementById("dateTag");
-const coachMsg = document.getElementById("coachMsg");
-const eventHint = document.getElementById("eventHint");
-
-const canvas = document.getElementById("cv");
-const ctx = canvas.getContext("2d");
-const W = canvas.width, H = canvas.height;
-
-const btnStart = document.getElementById("btnStart");
-const btnNext  = document.getElementById("btnNext");
-const statusEl = document.getElementById("status");
-
-const TRACK = { left: 85, right: 955, top: 92, laneH: 48, lanes: 8, finishX: 920 };
-const COLORS = ["#ffd400","#66d9ff","#ff6b6b","#a7ff83","#c792ea","#f78c6c","#89ddff","#f6f7ff"];
-
-let state = "idle"; // idle | running | finished
-let t0 = 0;
-
-function rand(min, max) { return min + Math.random()*(max-min); }
-function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
-
-function makeStats(base){
-  const SPD = clamp(Math.round(base + rand(-4,4)), 20, 99);
-  const ACC = clamp(Math.round(base + rand(-4,4)), 20, 99);
-  const POW = clamp(Math.round(base + rand(-4,4)), 20, 99);
-  const TEC = clamp(Math.round(base + rand(-4,4)), 20, 99);
-  const STA = clamp(Math.round(base + rand(-4,4)), 20, 99);
-  const MEN = clamp(Math.round(base + rand(-4,4)), 20, 99);
-  return {SPD,ACC,POW,TEC,STA,MEN};
-}
-
-function buildRunners(){
-  const runners = [];
-  runners.push({ id:"P001", name:playerName, school:"春風高校", key:true, portrait:"🙂", stats: makeStats(55) });
-  runners.push({ id:"R_SAME", name:"風間 迅", school:"槍ヶ岳高校", key:true, portrait:"😼", stats: makeStats(60) });
-  runners.push({ id:"BOSS", name:"九条 蒼真", school:"富士高校", key:true, portrait:"😤", stats: makeStats(62) });
-
-  const mobs = [
-    ["田中 陸","北岳高校"],
-    ["佐藤 悠真","奥穂高高校"],
-    ["鈴木 湊","大雪山高校"],
-    ["高橋 蓮","白山高校"],
-    ["伊藤 隼人","御嶽高校"],
-  ];
-  for (const [name,school] of mobs){
-    runners.push({ id:"M_"+name, name, school, key:false, portrait:"", stats: makeStats(54) });
+  function atmosphereText(state) {
+    // 青春の空気：時期で少し変える
+    const m = state.turn.month;
+    if (m <= 5) return "夕方、風が少し冷たい。";
+    if (m <= 8) return "夏の匂い。汗が真っ直ぐになる。";
+    if (m <= 10) return "空が高い。呼吸が澄んでいく。";
+    return "冷えた空気。足音がよく響く。";
   }
 
-  for (let i=runners.length-1;i>0;i--){
-    const j=Math.floor(Math.random()*(i+1));
-    [runners[i], runners[j]] = [runners[j], runners[i]];
+  function sceneCaption(state) {
+    const meet = state.nextMeet;
+    if (meet.turnsLeft <= 2) return "弱小でも、直線は嘘をつかない。";
+    return "春風高校は弱小。でも、積み上げた分だけ速くなる。";
   }
 
-  runners.forEach((r,idx)=>{
-    r.lane = idx;
-    r.y = TRACK.top + idx*TRACK.laneH;
-    r.x = TRACK.left;
-    r.v = 0;
-    r.done = false;
-    r.time = null;
-    r.animPhase = rand(0, Math.PI*2);
-  });
+  function applyTraining(state, action) {
+    const p = state.player;
+    const s = p.stats;
 
-  return runners;
-}
+    // 練習効果（仮の固定値。次フェーズで「能力計算式を確定」する）
+    // ここでは“気持ちよさ”優先で、増減が分かるようにしている。
+    const eff = {
+      start:   { ACC: +3, TEC: +2, fatigue: +14, vibe: "スタートの音が、体に入る。" },
+      tempo:   { TEC: +3, MEN: +2, fatigue: +10, vibe: "フォームが一瞬だけ“揃う”。" },
+      power:   { POW: +4, STA: +1, fatigue: +18, vibe: "脚が重い。でも、明日の脚になる。" },
+      core:    { STA: +3, TEC: +1, fatigue: +12, vibe: "軸が少し安定した気がする。" },
+      mental:  { MEN: +4, fatigue: +2,  vibe: "呼吸が落ち着く。勝負は心からだ。" },
+      massage: { all: +1, fatigue: -18, vibe: "体がほぐれて、視界が明るくなる。" },
+      rest:    { fatigue: -40, vibe: "休むのも練習。焦りだけは置いていく。" },
+    }[action];
 
-let runners = buildRunners();
+    if (!eff) return;
 
-function calcTargetSpeed(stats){
-  const base = 2.05;
-  const spd = stats.SPD * 0.026;
-  const pow = stats.POW * 0.010;
-  return base + spd + pow;
-}
+    // vibe（青春の一行）
+    SD_UI.setAtmosphereText(atmosphereText(state));
+    SD_UI.setSceneCaption(eff.vibe);
 
-function updateRunner(r, dt){
-  if (r.done) return;
+    // stats update
+    const mult = p.growthTraits.growth / 100; // 0.85〜1.15
+    if (eff.all) {
+      for (const k of ["SPD","ACC","POW","TEC","STA","MEN"]) {
+        s[k] = clampStat(s[k] + Math.round(eff.all * mult));
+      }
+    } else {
+      for (const k of ["SPD","ACC","POW","TEC","STA","MEN"]) {
+        if (eff[k]) s[k] = clampStat(s[k] + Math.round(eff[k] * mult));
+      }
+    }
 
-  const {ACC, TEC, STA, MEN} = r.stats;
-  const target = calcTargetSpeed(r.stats);
+    // fatigue update
+    if (typeof eff.fatigue === "number") {
+      p.fatigue = SD_DATA.clamp(p.fatigue + eff.fatigue, 0, 100);
+    }
 
-  const accel = (0.65 + ACC*0.010) * dt;
+    // チーム波及（主人公が練習すると全員が少しだけ伸びる：MVP軽量版）
+    // ※後で「改良5」で本格化させるが、今から“気持ちよさ”は入れておく
+    const teamMult = 0.35; // 主人公の35%くらいの影響（控えめ）
+    if (action !== "rest") {
+      for (const m of state.team) {
+        // 弱い能力を少しだけ底上げ
+        const keys = Object.entries(m.stats).sort((a,b)=>a[1]-b[1]).map(x=>x[0]);
+        const k1 = keys[0];
+        const k2 = keys[1];
+        const gain = action === "massage" ? 1 : 0;
+        m.stats[k1] = clampStat(m.stats[k1] + Math.max(1, Math.round((gain + 1) * teamMult)));
+        m.stats[k2] = clampStat(m.stats[k2] + Math.max(0, Math.round((gain + 0) * teamMult)));
+      }
+      recalcTeamPowers(state);
+    }
 
-  const jitterAmp = clamp(0.35 - (MEN*0.002 + TEC*0.001), 0.05, 0.35);
-  const jitter = (Math.random()*2-1) * jitterAmp;
+    // injury check (fatigue 100)
+    if (p.fatigue >= 100) {
+      // 怪我：能力減点（ランダムで2つを減らす）
+      p.injuryCount += 1;
+      const keys = ["SPD","ACC","POW","TEC","STA","MEN"];
+      const a = keys[SD_DATA.randInt(0, keys.length - 1)];
+      let b = keys[SD_DATA.randInt(0, keys.length - 1)];
+      if (b === a) b = keys[(keys.indexOf(a) + 1) % keys.length];
 
-  const progress = (r.x - TRACK.left) / (TRACK.finishX - TRACK.left);
-  const fade = (progress > 0.65) ? ( (0.65-progress) * ( (80-STA)/140 ) ) : 0;
-  const fatigueFactor = clamp(1 + fade, 0.88, 1.02);
+      s[a] = clampStat(s[a] - SD_DATA.randInt(3, 7));
+      s[b] = clampStat(s[b] - SD_DATA.randInt(3, 7));
+      p.fatigue = 55; // 怪我後に強制的に下がる
 
-  r.v += (target - r.v) * accel;
-  const step = (r.v + jitter) * fatigueFactor * 60 * dt;
-  r.x += Math.max(0.5, step);
-
-  if (r.x >= TRACK.finishX){
-    r.x = TRACK.finishX;
-    r.done = true;
-    r.time = (performance.now() - t0) / 1000;
-  }
-}
-
-function allDone(){ return runners.every(r=>r.done); }
-
-function roundRect(x, y, w, h, r, fill, stroke) {
-  if (w < 2*r) r = w/2;
-  if (h < 2*r) r = h/2;
-  ctx.beginPath();
-  ctx.moveTo(x+r, y);
-  ctx.arcTo(x+w, y,   x+w, y+h, r);
-  ctx.arcTo(x+w, y+h, x,   y+h, r);
-  ctx.arcTo(x,   y+h, x,   y,   r);
-  ctx.arcTo(x,   y,   x+w, y,   r);
-  ctx.closePath();
-  if (fill) ctx.fill();
-  if (stroke) ctx.stroke();
-}
-
-function drawStadiumBg(){
-  const g = ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0, "#0a1c35");
-  g.addColorStop(1, "#081326");
-  ctx.fillStyle = g;
-  ctx.fillRect(0,0,W,H);
-
-  ctx.fillStyle = "rgba(255,255,255,.06)";
-  ctx.beginPath(); ctx.arc(160, 80, 120, 0, Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(840, 70, 140, 0, Math.PI*2); ctx.fill();
-}
-
-function drawTrack(){
-  drawStadiumBg();
-
-  const pad = 24;
-  const trackX = pad, trackY = pad, trackW = W-pad*2, trackH = H-pad*2;
-  ctx.fillStyle = "#1d4f9a";
-  roundRect(trackX, trackY, trackW, trackH, 18, true, false);
-
-  // 質感
-  ctx.save();
-  ctx.globalAlpha = 0.08;
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = 2;
-  for(let x = -H; x < W+H; x += 22){
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x+H, H);
-    ctx.stroke();
-  }
-  ctx.restore();
-
-  // 内側
-  ctx.fillStyle = "rgba(0,0,0,.18)";
-  roundRect(TRACK.left-28, TRACK.top-28, (TRACK.finishX-(TRACK.left-28))+60, TRACK.lanes*TRACK.laneH+56, 16, true, false);
-
-  // レーン
-  ctx.strokeStyle = "rgba(255,255,255,.42)";
-  ctx.lineWidth = 2;
-  for (let i=0;i<=TRACK.lanes;i++){
-    const y = TRACK.top + i*TRACK.laneH;
-    ctx.beginPath();
-    ctx.moveTo(TRACK.left, y);
-    ctx.lineTo(TRACK.right, y);
-    ctx.stroke();
+      SD_UI.setSceneCaption("怪我をした。痛みより、悔しさが先に来る。");
+    }
   }
 
-  // レーン番号
-  ctx.fillStyle = "rgba(255,255,255,.75)";
-  ctx.font = "700 12px system-ui";
-  for(let i=0;i<TRACK.lanes;i++){
-    ctx.fillText(String(i+1), TRACK.left-22, TRACK.top + i*TRACK.laneH + 30);
+  function advanceTurn(state) {
+    // 次大会までカウント
+    if (state.nextMeet.turnsLeft > 0) state.nextMeet.turnsLeft -= 1;
+
+    // 年月ターン進行（上旬→中旬→下旬→次月上旬）
+    state.turn.term += 1;
+    if (state.turn.term >= 4) {
+      state.turn.term = 1;
+      state.turn.month += 1;
+
+      // 学年更新（4月で進級）
+      if (state.turn.month === 13) {
+        state.turn.month = 4;
+        state.turn.grade += 1;
+        state.player.grade = state.turn.grade;
+
+        // 卒業＆新入生加入（簡易）
+        // 3年生が引退：チームから3年を除外し、新1年を同数追加（ここは改良6で本格化）
+        const before = state.team.length;
+        state.team = state.team.filter(m => m.grade < 3);
+        const removed = before - state.team.length;
+
+        // 残りを進級
+        for (const m of state.team) m.grade = Math.min(3, m.grade + 1);
+
+        for (let i = 0; i < removed; i++) {
+          const rarity = SD_DATA.rollRarity(0.10); // 新入生レア
+          const name = (rarity === "rare")
+            ? SD_DATA.makeTeamMembers()[0].name // 乱数ソースとして流用
+            : SD_DATA.makeTeamMembers()[0].name;
+          const stats = SD_DATA.genStatsByGrade(1, rarity);
+          const tag = SD_DATA.personalityTag(stats);
+          const pow = SD_DATA.totalPower(stats);
+          state.team.push({
+            id: `n${Date.now()}_${i}`,
+            name,
+            grade: 1,
+            rarity,
+            stats,
+            tag,
+            pow,
+            icon: String((i % 8) + 1)
+          });
+        }
+        recalcTeamPowers(state);
+      }
+    }
+
+    // 監督コメント更新
+    SD_UI.setCoachLine(coachLineForTurn(state));
+    SD_UI.setAtmosphereText(atmosphereText(state));
+    SD_UI.setSceneCaption(sceneCaption(state));
   }
 
-  // スタート
-  ctx.strokeStyle = "rgba(255,255,255,.92)";
-  ctx.lineWidth = 5;
-  ctx.beginPath();
-  ctx.moveTo(TRACK.left, TRACK.top);
-  ctx.lineTo(TRACK.left, TRACK.top + TRACK.lanes*TRACK.laneH);
-  ctx.stroke();
-
-  // ゴール（市松）
-  const fy0 = TRACK.top, fy1 = TRACK.top + TRACK.lanes*TRACK.laneH;
-  const block = 10;
-  for(let y=fy0; y<fy1; y+=block){
-    const on = ((Math.floor((y-fy0)/block)) % 2) === 0;
-    ctx.fillStyle = on ? "rgba(255,255,255,.95)" : "rgba(0,0,0,.55)";
-    ctx.fillRect(TRACK.finishX, y, 10, block);
+  function nextMeetText(state) {
+    const m = state.nextMeet;
+    if (m.turnsLeft <= 0) return `${m.name}（開催中）`;
+    return `${m.name}（あと${m.turnsLeft}ターン）`;
   }
 
-  // 100m
-  ctx.fillStyle = "rgba(255,255,255,.9)";
-  ctx.font = "900 18px system-ui";
-  ctx.fillText("100m", TRACK.left, 46);
-}
-
-function drawRunnerHuman(r, now){
-  const laneColor = COLORS[r.lane % COLORS.length];
-  const running = (state === "running") && !r.done;
-
-  const speed01 = clamp(r.v / 4.0, 0.2, 1.0);
-  const phase = running ? (now/90 * (0.8 + speed01*1.2) + r.animPhase) : r.animPhase;
-
-  // （いまはバウンス強めになりがちなので控えめ）
-  const bounce = running ? Math.sin(phase) * (1.0 + speed01*0.6) : 0;
-  const lean = running ? (0.16 + speed01*0.08) : 0.10;
-
-  const swing = running ? Math.sin(phase) : 0;
-  const swing2 = running ? Math.sin(phase + Math.PI/2) : 0;
-
-  const cx = r.x + 12;
-  const cy = r.y + 28 + bounce;
-
-  // shadow
-  ctx.fillStyle = "rgba(0,0,0,.28)";
-  ctx.beginPath();
-  ctx.ellipse(cx+4, cy+26, 12 - bounce*0.15, 4 - bounce*0.05, 0, 0, Math.PI*2);
-  ctx.fill();
-
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(-lean);
-
-  // legs
-  ctx.strokeStyle = "rgba(0,0,0,.55)";
-  ctx.lineWidth = 3.1;
-  ctx.lineCap = "round";
-
-  const legSpread = 12 + speed01*6;
-  const lf = swing * legSpread;
-  const lb = -swing * legSpread;
-
-  ctx.beginPath();
-  ctx.moveTo(-2, 12);
-  ctx.lineTo(-4 + lf*0.18, 22);
-  ctx.lineTo(-6 + lf*0.22, 24 + Math.max(0, -swing)*2);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo( 2, 12);
-  ctx.lineTo( 4 + lb*0.18, 22);
-  ctx.lineTo( 6 + lb*0.22, 24 + Math.max(0, swing)*2);
-  ctx.stroke();
-
-  // torso
-  ctx.fillStyle = laneColor;
-  roundRect(-9, -4, 18, 20, 5, true, false);
-
-  // bib
-  ctx.fillStyle = "rgba(255,255,255,.88)";
-  roundRect(-7, 5, 14, 9, 2, true, false);
-  ctx.fillStyle = "rgba(0,0,0,.65)";
-  ctx.font = "700 9px system-ui";
-  ctx.fillText(String(r.lane+1), -2.5, 12);
-
-  // arms
-  ctx.strokeStyle = "rgba(0,0,0,.55)";
-  ctx.lineWidth = 3.0;
-
-  const armSpread = 16 + speed01*8;
-  const a1 = swing2 * armSpread;
-  const a2 = -swing2 * armSpread;
-
-  ctx.beginPath();
-  ctx.moveTo(-8, 0);
-  ctx.lineTo(-14 + a1*0.20, 6 + (-swing2)*2);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo( 8, 0);
-  ctx.lineTo( 14 + a2*0.20, 6 + (swing2)*2);
-  ctx.stroke();
-
-  // head
-  ctx.fillStyle = "rgba(255,255,255,.95)";
-  ctx.beginPath();
-  ctx.arc(0, -12, 6.2, 0, Math.PI*2);
-  ctx.fill();
-  ctx.strokeStyle = "rgba(0,0,0,.25)";
-  ctx.lineWidth = 1.4;
-  ctx.stroke();
-
-  ctx.restore();
-
-  // label
-  const labelX = TRACK.finishX + 14;
-  const labelY = r.y + 25;
-
-  ctx.fillStyle = "rgba(0,0,0,.55)";
-  roundRect(labelX-6, labelY-14, 240, 22, 8, true, false);
-
-  ctx.fillStyle = "#fff";
-  ctx.font = "12px system-ui";
-  ctx.fillText(`${r.name}（${r.school}）`, labelX, labelY);
-
-  // portrait bubble
-  if (r.key){
-    const bx = r.x + 40;
-    const by = r.y - 10;
-    ctx.fillStyle = "rgba(255,255,255,.92)";
-    roundRect(bx, by, 44, 30, 8, true, false);
-    ctx.beginPath();
-    ctx.moveTo(bx+10, by+30);
-    ctx.lineTo(bx+18, by+30);
-    ctx.lineTo(bx+12, by+38);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.fillStyle = "#111";
-    ctx.font = "20px system-ui";
-    ctx.fillText(r.portrait || "🙂", bx+10, by+22);
+  // --- Name modal wiring ---
+  function showNameModalIfNeeded(state) {
+    if (!state.player.name || !state.player.name.trim()) {
+      SD_UI.openNameModal();
+      return true;
+    }
+    return false;
   }
-}
 
-function draw(now){
-  drawTrack();
-  runners.forEach(r => drawRunnerHuman(r, now));
+  function wireNameModal(state) {
+    const back = document.getElementById("nameModalBackdrop");
+    const input = document.getElementById("nameInput");
+    const saveBtn = document.getElementById("nameSaveBtn");
+    const randBtn = document.getElementById("nameRandomBtn");
 
-  if (state === "finished"){
-    const sorted = [...runners].sort((a,b)=>a.time - b.time);
+    function applyName(name) {
+      const n = (name || "").trim().slice(0, 12);
+      if (!n) return false;
+      state.player.name = n;
+      SD_UI.setPlayerName(n);
+      save(state);
+      SD_UI.closeNameModal();
+      return true;
+    }
 
-    ctx.fillStyle = "rgba(0,0,0,.70)";
-    roundRect(630, 30, 340, 190, 16, true, false);
-
-    ctx.fillStyle = "#eaf2ff";
-    ctx.font = "900 16px system-ui";
-    ctx.fillText("結果（決勝）", 650, 60);
-
-    ctx.font = "13px system-ui";
-    sorted.slice(0,8).forEach((r,i)=>{
-      ctx.fillText(`${i+1}位  ${r.name}  ${r.time.toFixed(2)}s`, 650, 88 + i*18);
+    randBtn.addEventListener("click", () => {
+      input.value = SD_DATA.randomPlayerName();
+      input.focus();
     });
 
-    const win = sorted[0];
-    statusEl.textContent = `大会終了：優勝 ${win.name}（${win.time.toFixed(2)}s）`;
+    saveBtn.addEventListener("click", () => {
+      applyName(input.value);
+    });
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        applyName(input.value);
+      }
+    });
+
+    // backdrop click ignore（誤タップ防止）
+    back.addEventListener("click", (e) => {
+      if (e.target === back) {
+        // 閉じない（名前は必須）
+      }
+    });
   }
-}
 
-let last = performance.now();
-function loop(now){
-  const dt = (now - last) / 1000;
-  last = now;
+  // --- Actions wiring ---
+  function wireActions(state) {
+    const btns = document.querySelectorAll("button[data-action]");
+    btns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        const action = btn.getAttribute("data-action");
+        if (!action) return;
 
-  if (state === "running"){
-    runners.forEach(r => updateRunner(r, dt));
-    if (allDone()){
-      state = "finished";
-      btnStart.disabled = true;
-      btnNext.disabled = false;
+        if (action === "next") {
+          advanceTurn(state);
+        } else {
+          setMenu(state, action);
+          applyTraining(state, action);
+        }
+
+        // UI反映
+        const t = state.turn;
+        SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
+        SD_UI.setNextMeet(nextMeetText(state));
+        SD_UI.renderStats(state.player);
+        SD_UI.renderTeam(state.team);
+
+        // シーンアニメ側にも反映
+        if (window.SD_SCENE) SD_SCENE.setMode(state.selectedMenu);
+
+        save(state);
+      });
+    });
+  }
+
+  // --- Scene (canvas) ---
+  function initScene(state) {
+    const canvas = document.getElementById("sceneCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const scene = makeSceneRenderer(canvas, ctx);
+    window.SD_SCENE = scene;
+
+    scene.setMode(state.selectedMenu);
+    scene.start();
+  }
+
+  function makeSceneRenderer(canvas, ctx) {
+    let raf = 0;
+    let mode = "tempo";
+    let t = 0;
+
+    // runner anim state
+    const runner = {
+      x: 110,
+      y: 290,
+      phase: 0,
+      speed: 1.6,
+    };
+
+    function setMode(m) {
+      mode = m;
     }
-  }
 
-  draw(now);
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
+    function drawBackground() {
+      const w = canvas.width, h = canvas.height;
 
-function refreshCoach(){
-  dateTag.textContent = getDateLabel(turnIndex);
-  const info = buildCoachMessage(turnIndex);
-  coachMsg.textContent = info.msg;
-  eventHint.textContent = info.hint || "";
-}
+      // sky gradient
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, "rgba(25,45,85,0.95)");
+      g.addColorStop(1, "rgba(10,15,28,0.98)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
 
-function startRace(){
-  if (state !== "idle") return;
-  state = "running";
-  t0 = performance.now();
-  btnStart.disabled = true;
-  btnNext.disabled = true;
-  statusEl.textContent = "レース中…";
-}
+      // stadium silhouettes
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(0, 140, w, 70);
 
-function nextTurn(){
-  // ターン進行（育成メニューは次の改良で追加）
-  turnIndex += 1;
-  setTurnIndex(turnIndex);
+      // crowd dots
+      ctx.fillStyle = "rgba(255,255,255,0.06)";
+      for (let i = 0; i < 220; i++) {
+        const x = (i * 17 + (t*1.2)) % w;
+        const y = 145 + (i % 4) * 14 + (Math.sin(i + t*0.01) * 1.5);
+        ctx.beginPath();
+        ctx.arc(x, y, 1.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-  // 次ターンに入ったら“新しい日”としてレースもやれる（練習試合扱い）
-  // ※公式大会の仕組み（予選/決勝/出場判定）は次の改良で
-  state = "idle";
-  runners = buildRunners();
-  btnStart.disabled = false;
-  btnNext.disabled = false;
-  statusEl.textContent = "待機中（次のターン）";
+      // light towers
+      ctx.fillStyle = "rgba(255,255,255,0.07)";
+      ctx.fillRect(52, 55, 10, 120);
+      ctx.fillRect(w-62, 55, 10, 120);
+      ctx.fillStyle = "rgba(255,255,255,0.10)";
+      ctx.fillRect(40, 45, 34, 16);
+      ctx.fillRect(w-74, 45, 34, 16);
 
-  refreshCoach();
-}
+      // track base (blue)
+      ctx.fillStyle = "rgba(40,90,180,0.28)";
+      ctx.fillRect(0, 210, w, 170);
 
-btnStart.addEventListener("click", startRace);
-btnNext.addEventListener("click", nextTurn);
-canvas.addEventListener("click", ()=>{ if (state === "idle") startRace(); });
+      // track pattern
+      ctx.strokeStyle = "rgba(255,255,255,0.08)";
+      ctx.lineWidth = 2;
+      for (let i = -w; i < w*2; i += 26) {
+        ctx.beginPath();
+        ctx.moveTo(i + (t*0.7)%26, 210);
+        ctx.lineTo(i + (t*0.7)%26 + 180, 380);
+        ctx.stroke();
+      }
 
-// 初期表示
-btnNext.disabled = false;
-refreshCoach();
+      // lanes
+      ctx.strokeStyle = "rgba(255,255,255,0.18)";
+      ctx.lineWidth = 2;
+      const lanes = 4;
+      for (let i = 0; i <= lanes; i++) {
+        const y = 240 + i * 28;
+        ctx.beginPath();
+        ctx.moveTo(70, y);
+        ctx.lineTo(w - 70, y);
+        ctx.stroke();
+      }
 
-/** 開発用：Nで名前変更 */
-window.addEventListener("keydown", (e)=>{
-  if (e.key.toLowerCase() === "n"){
-    const next = (prompt("プレイヤー名を変更します", localStorage.getItem(STORAGE_KEY_NAME) || playerName) || "").trim();
-    if (next){
-      setPlayerName(next);
-      location.reload();
+      // start/finish hints
+      ctx.fillStyle = "rgba(255,255,255,0.16)";
+      ctx.fillRect(86, 226, 4, 130);
+      ctx.fillRect(w-90, 226, 4, 130);
     }
+
+    function drawRunner() {
+      // “飛び跳ね”を抑える：上下動を最小にして、腕脚の振りで走って見せる
+      const baseX = runner.x + (Math.sin(t * 0.02) * 2);
+      const baseY = runner.y + (Math.sin(t * 0.04) * 1.2); // 小さく
+
+      // speed by mode
+      const sp = (mode === "rest") ? 0.2
+        : (mode === "massage") ? 0.6
+        : (mode === "mental") ? 0.9
+        : (mode === "core") ? 1.1
+        : (mode === "tempo") ? 1.25
+        : (mode === "start") ? 1.4
+        : (mode === "power") ? 1.0
+        : 1.1;
+
+      runner.speed = sp;
+
+      // runner moves slightly
+      runner.x += sp * 0.35;
+      if (runner.x > canvas.width - 130) runner.x = 110;
+
+      const phase = t * 0.06 * sp;
+      const armA = Math.sin(phase) * 10;      // degrees-ish
+      const armB = Math.sin(phase + Math.PI) * 10;
+      const legA = Math.sin(phase + Math.PI/2) * 12;
+      const legB = Math.sin(phase + Math.PI/2 + Math.PI) * 12;
+
+      // shadow
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.beginPath();
+      ctx.ellipse(baseX+12, baseY+42, 16, 6, 0, 0, Math.PI*2);
+      ctx.fill();
+
+      // body
+      ctx.save();
+      ctx.translate(baseX, baseY);
+      ctx.rotate(-0.08); // slight forward lean
+
+      // head
+      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      ctx.beginPath();
+      ctx.arc(16, -6, 10, 0, Math.PI * 2);
+      ctx.fill();
+
+      // torso (uniform)
+      ctx.fillStyle = "rgba(255, 200, 72, 0.92)";
+      roundRect(ctx, 6, 6, 26, 22, 6);
+      ctx.fill();
+
+      // bib
+      ctx.fillStyle = "rgba(0,0,0,0.18)";
+      roundRect(ctx, 12, 12, 14, 10, 4);
+      ctx.fill();
+
+      // arms (two lines)
+      ctx.strokeStyle = "rgba(255,255,255,0.72)";
+      ctx.lineWidth = 5;
+      ctx.lineCap = "round";
+      // front arm
+      ctx.save();
+      ctx.translate(10, 10);
+      ctx.rotate((armA * Math.PI) / 180);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-10, 12);
+      ctx.stroke();
+      ctx.restore();
+      // back arm
+      ctx.save();
+      ctx.translate(28, 10);
+      ctx.rotate((armB * Math.PI) / 180);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(10, 12);
+      ctx.stroke();
+      ctx.restore();
+
+      // legs (two thick strokes)
+      ctx.strokeStyle = "rgba(255,255,255,0.78)";
+      ctx.lineWidth = 6;
+
+      ctx.save();
+      ctx.translate(14, 28);
+      ctx.rotate((legA * Math.PI) / 180);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-8, 18);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(24, 28);
+      ctx.rotate((legB * Math.PI) / 180);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(10, 18);
+      ctx.stroke();
+      ctx.restore();
+
+      // shoes
+      ctx.fillStyle = "rgba(255,255,255,0.88)";
+      ctx.fillRect(2, 44, 10, 4);
+      ctx.fillRect(26, 44, 10, 4);
+
+      ctx.restore();
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x+rr, y);
+      ctx.arcTo(x+w, y, x+w, y+h, rr);
+      ctx.arcTo(x+w, y+h, x, y+h, rr);
+      ctx.arcTo(x, y+h, x, y, rr);
+      ctx.arcTo(x, y, x+w, y, rr);
+      ctx.closePath();
+    }
+
+    function draw() {
+      t += 1;
+      drawBackground();
+      drawRunner();
+
+      // small particles (sweat / dust)
+      ctx.fillStyle = "rgba(255,255,255,0.08)";
+      for (let i = 0; i < 16; i++) {
+        const x = (canvas.width - 140) + (i*18 + t*0.8) % 140;
+        const y = 220 + (i % 6) * 24;
+        ctx.fillRect(x, y, 2, 2);
+      }
+
+      raf = requestAnimationFrame(draw);
+    }
+
+    function start() {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(draw);
+    }
+
+    return { start, setMode };
   }
-});
-</script>
-</body>
-</html>
+
+  // --- boot ---
+  function boot() {
+    let state = load();
+    if (!state) state = defaultState();
+
+    // UI initial
+    const t = state.turn;
+    SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
+    SD_UI.setNextMeet(`${state.nextMeet.name}（あと${state.nextMeet.turnsLeft}ターン）`);
+    SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
+    SD_UI.setCoachLine(coachLineForTurn(state));
+    SD_UI.setAtmosphereText(atmosphereText(state));
+    SD_UI.setSceneCaption(sceneCaption(state));
+
+    recalcTeamPowers(state);
+    SD_UI.renderStats(state.player);
+    SD_UI.renderTeam(state.team);
+
+    // scene
+    initScene(state);
+
+    // modal
+    wireNameModal(state);
+    showNameModalIfNeeded(state);
+
+    // actions
+    wireActions(state);
+
+    // persist initial
+    save(state);
+  }
+
+  window.addEventListener("DOMContentLoaded", boot);
+})();
