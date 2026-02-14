@@ -22,4 +22,344 @@
     background:#ffd400; color:#111; font-weight:900; cursor:pointer;
   }
   button:disabled { opacity:.5; cursor:not-allowed; }
-  .sma
+  .small { font-size:12px; opacity:.85; }
+</style>
+</head>
+
+<body>
+  <div class="wrap">
+    <canvas id="cv" width="1000" height="520"></canvas>
+  </div>
+
+  <div class="hud">
+    <div class="card">
+      <div><b>100m（MVP）</b><div class="small">タップでスタート。もう一回で再走。</div></div>
+    </div>
+    <button id="btnStart">スタート</button>
+    <button id="btnReset">リセット</button>
+    <div class="card" id="status">待機中</div>
+  </div>
+
+<script>
+/** ========= MVP: 8-lane 100m race ========= **/
+const canvas = document.getElementById("cv");
+const ctx = canvas.getContext("2d");
+const W = canvas.width, H = canvas.height;
+
+const btnStart = document.getElementById("btnStart");
+const btnReset = document.getElementById("btnReset");
+const statusEl = document.getElementById("status");
+
+const TRACK = {
+  left: 85,
+  right: 955,
+  top: 92,
+  laneH: 48,
+  lanes: 8,
+  finishX: 920
+};
+
+// シルエットカラー
+const COLORS = ["#ffd400","#66d9ff","#ff6b6b","#a7ff83","#c792ea","#f78c6c","#89ddff","#f6f7ff"];
+
+// 主要人物（吹き出し）
+const KEY_IDS = new Set(["P001","R_SAME","BOSS"]);
+
+let state = "idle"; // idle | running | finished
+let t0 = 0;
+
+function rand(min, max) { return min + Math.random()*(max-min); }
+function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+/** 雰囲気ステータス */
+function makeStats(base){
+  const SPD = clamp(Math.round(base + rand(-4,4)), 20, 99);
+  const ACC = clamp(Math.round(base + rand(-4,4)), 20, 99);
+  const POW = clamp(Math.round(base + rand(-4,4)), 20, 99);
+  const TEC = clamp(Math.round(base + rand(-4,4)), 20, 99);
+  const STA = clamp(Math.round(base + rand(-4,4)), 20, 99);
+  const MEN = clamp(Math.round(base + rand(-4,4)), 20, 99);
+  return {SPD,ACC,POW,TEC,STA,MEN};
+}
+
+function buildRunners(){
+  const runners = [];
+
+  runners.push({ id:"P001", name:"（あなた）", school:"春風高校", key:true, portrait:"🙂", stats: makeStats(55) });
+  runners.push({ id:"R_SAME", name:"風間 迅", school:"槍ヶ岳高校", key:true, portrait:"😼", stats: makeStats(60) });
+  runners.push({ id:"BOSS", name:"九条 蒼真", school:"富士高校", key:true, portrait:"😤", stats: makeStats(62) });
+
+  const mobs = [
+    ["田中 陸","北岳高校"],
+    ["佐藤 悠真","奥穂高高校"],
+    ["鈴木 湊","大雪山高校"],
+    ["高橋 蓮","白山高校"],
+    ["伊藤 隼人","御嶽高校"],
+  ];
+  for (const [name,school] of mobs){
+    runners.push({ id:"M_"+name, name, school, key:false, portrait:"", stats: makeStats(54) });
+  }
+
+  // レーンシャッフル
+  for (let i=runners.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [runners[i], runners[j]] = [runners[j], runners[i]];
+  }
+
+  runners.forEach((r,idx)=>{
+    r.lane = idx;
+    r.y = TRACK.top + idx*TRACK.laneH;
+    r.x = TRACK.left;
+    r.v = 0;
+    r.done = false;
+    r.time = null;
+  });
+
+  return runners;
+}
+
+let runners = buildRunners();
+
+function calcTargetSpeed(stats){
+  const base = 2.1;
+  const spd = stats.SPD * 0.025;
+  const pow = stats.POW * 0.010;
+  return base + spd + pow;
+}
+
+function updateRunner(r, dt){
+  if (r.done) return;
+
+  const {ACC, TEC, STA, MEN} = r.stats;
+  const target = calcTargetSpeed(r.stats);
+
+  const accel = (0.6 + ACC*0.010) * dt;
+
+  const jitterAmp = clamp(0.35 - (MEN*0.002 + TEC*0.001), 0.05, 0.35);
+  const jitter = (Math.random()*2-1) * jitterAmp;
+
+  const progress = (r.x - TRACK.left) / (TRACK.finishX - TRACK.left);
+  const fade = (progress > 0.65) ? ( (0.65-progress) * ( (80-STA)/140 ) ) : 0;
+  const fatigueFactor = clamp(1 + fade, 0.88, 1.02);
+
+  r.v += (target - r.v) * accel;
+  const step = (r.v + jitter) * fatigueFactor * 60 * dt;
+
+  r.x += Math.max(0.5, step);
+
+  if (r.x >= TRACK.finishX){
+    r.x = TRACK.finishX;
+    r.done = true;
+    r.time = (performance.now() - t0) / 1000;
+  }
+}
+
+function allDone(){ return runners.every(r=>r.done); }
+
+function roundRect(x, y, w, h, r, fill, stroke) {
+  if (w < 2*r) r = w/2;
+  if (h < 2*r) r = h/2;
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y,   x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x,   y+h, r);
+  ctx.arcTo(x,   y+h, x,   y,   r);
+  ctx.arcTo(x,   y,   x+w, y,   r);
+  ctx.closePath();
+  if (fill) ctx.fill();
+  if (stroke) ctx.stroke();
+}
+
+function drawStadiumBg(){
+  // 夜のスタジアム風グラデ
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0, "#0a1c35");
+  g.addColorStop(1, "#081326");
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,H);
+
+  // ライト風のぼんやり
+  ctx.fillStyle = "rgba(255,255,255,.06)";
+  ctx.beginPath(); ctx.arc(160, 80, 120, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(840, 70, 140, 0, Math.PI*2); ctx.fill();
+}
+
+function drawTrack(){
+  drawStadiumBg();
+
+  // 青いトラック面
+  const pad = 24;
+  const trackX = pad, trackY = pad, trackW = W-pad*2, trackH = H-pad*2;
+  ctx.fillStyle = "#1d4f9a";
+  roundRect(trackX, trackY, trackW, trackH, 18, true, false);
+
+  // トラックの質感（斜めストライプ）
+  ctx.save();
+  ctx.globalAlpha = 0.08;
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2;
+  for(let x = -H; x < W+H; x += 22){
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x+H, H);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // 内側フィールド（濃い青）
+  ctx.fillStyle = "rgba(0,0,0,.18)";
+  roundRect(TRACK.left-28, TRACK.top-28, (TRACK.finishX-(TRACK.left-28))+60, TRACK.lanes*TRACK.laneH+56, 16, true, false);
+
+  // レーンライン
+  ctx.strokeStyle = "rgba(255,255,255,.42)";
+  ctx.lineWidth = 2;
+  for (let i=0;i<=TRACK.lanes;i++){
+    const y = TRACK.top + i*TRACK.laneH;
+    ctx.beginPath();
+    ctx.moveTo(TRACK.left, y);
+    ctx.lineTo(TRACK.right, y);
+    ctx.stroke();
+  }
+
+  // レーン番号
+  ctx.fillStyle = "rgba(255,255,255,.75)";
+  ctx.font = "700 12px system-ui";
+  for(let i=0;i<TRACK.lanes;i++){
+    ctx.fillText(String(i+1), TRACK.left-22, TRACK.top + i*TRACK.laneH + 30);
+  }
+
+  // スタートライン
+  ctx.strokeStyle = "rgba(255,255,255,.92)";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(TRACK.left, TRACK.top);
+  ctx.lineTo(TRACK.left, TRACK.top + TRACK.lanes*TRACK.laneH);
+  ctx.stroke();
+
+  // ゴールライン（市松）
+  const fy0 = TRACK.top, fy1 = TRACK.top + TRACK.lanes*TRACK.laneH;
+  const block = 10;
+  for(let y=fy0; y<fy1; y+=block){
+    const on = ((Math.floor((y-fy0)/block)) % 2) === 0;
+    ctx.fillStyle = on ? "rgba(255,255,255,.95)" : "rgba(0,0,0,.55)";
+    ctx.fillRect(TRACK.finishX, y, 10, block);
+  }
+
+  // 100m 表記
+  ctx.fillStyle = "rgba(255,255,255,.9)";
+  ctx.font = "900 18px system-ui";
+  ctx.fillText("100m", TRACK.left, 46);
+}
+
+function drawRunner(r){
+  const x = r.x;
+  const y = r.y + 7;
+  const w = 18, h = 34;
+
+  // 影
+  ctx.fillStyle = "rgba(0,0,0,.25)";
+  ctx.fillRect(x+2, y+3, w, h);
+
+  // 本体
+  ctx.fillStyle = COLORS[r.lane % COLORS.length];
+  ctx.fillRect(x, y, w, h);
+
+  // ラベル（読みやすいように右側へ寄せる）
+  const labelX = TRACK.finishX + 14;
+  const labelY = y + 16;
+
+  ctx.fillStyle = "rgba(0,0,0,.55)";
+  roundRect(labelX-6, labelY-14, 220, 22, 8, true, false);
+
+  ctx.fillStyle = "#fff";
+  ctx.font = "12px system-ui";
+  ctx.fillText(`${r.name}（${r.school}）`, labelX, labelY);
+
+  // key bubble（顔）
+  if (r.key){
+    const bx = x + 30;
+    const by = y - 46;
+    ctx.fillStyle = "rgba(255,255,255,.92)";
+    roundRect(bx, by, 44, 30, 8, true, false);
+    ctx.beginPath();
+    ctx.moveTo(bx+10, by+30);
+    ctx.lineTo(bx+18, by+30);
+    ctx.lineTo(bx+12, by+38);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "#111";
+    ctx.font = "20px system-ui";
+    ctx.fillText(r.portrait || "🙂", bx+10, by+22);
+  }
+}
+
+function draw(){
+  drawTrack();
+  runners.forEach(drawRunner);
+
+  if (state === "finished"){
+    const sorted = [...runners].sort((a,b)=>a.time - b.time);
+
+    ctx.fillStyle = "rgba(0,0,0,.70)";
+    roundRect(630, 30, 340, 190, 16, true, false);
+
+    ctx.fillStyle = "#eaf2ff";
+    ctx.font = "900 16px system-ui";
+    ctx.fillText("結果（決勝）", 650, 60);
+
+    ctx.font = "13px system-ui";
+    sorted.slice(0,8).forEach((r,i)=>{
+      ctx.fillText(`${i+1}位  ${r.name}  ${r.time.toFixed(2)}s`, 650, 88 + i*18);
+    });
+
+    const win = sorted[0];
+    statusEl.textContent = `優勝：${win.name}（${win.time.toFixed(2)}s）`;
+  }
+}
+
+let last = performance.now();
+function loop(now){
+  const dt = (now - last) / 1000;
+  last = now;
+
+  if (state === "running"){
+    runners.forEach(r => updateRunner(r, dt));
+    if (allDone()){
+      state = "finished";
+      btnStart.disabled = false;
+      btnStart.textContent = "もう一回";
+    }
+  }
+
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+function startRace(){
+  if (state === "idle"){
+    state = "running";
+    t0 = performance.now();
+    btnStart.disabled = true;
+    statusEl.textContent = "レース中…";
+  } else if (state === "finished"){
+    resetRace();
+    startRace();
+  }
+}
+
+function resetRace(){
+  runners = buildRunners();
+  state = "idle";
+  btnStart.disabled = false;
+  btnStart.textContent = "スタート";
+  statusEl.textContent = "待機中";
+}
+
+btnStart.addEventListener("click", startRace);
+btnReset.addEventListener("click", resetRace);
+canvas.addEventListener("click", ()=>{ if (state === "idle") startRace(); });
+</script>
+</body>
+</html>
