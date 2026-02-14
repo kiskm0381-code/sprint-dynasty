@@ -1,0 +1,17 @@
+{
+  "same_grade_rivals": [
+    {"grade":1,"school_id":"S_YARI","name":"風間 迅","archetype":"top_speed","isKey":true},
+    {"grade":2,"school_id":"S_FUJI","name":"九条 蒼真","archetype":"balanced","isKey":true},
+    {"grade":3,"school_id":"S_KITA","name":"不知火 雷斗","archetype":"power","isKey":true}
+  ],
+  "superhumans": [
+    {"name":"ユリアン・ヴォルト"},
+    {"name":"ノエル・ライルズ"},
+    {"name":"ジョヴァン・ブレイク"},
+    {"name":"ジャステン・ゲイトリー"},
+    {"name":"クリステン・コルマン"},
+    {"name":"フレン・カーリン"},
+    {"name":"キリアン・パウエル"},
+    {"name":"ディオン・ストーム"}
+  ]
+}
