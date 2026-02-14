@@ -1,13 +1,12 @@
 // ui.js
-// どのHTML構造でも閉じることを最優先にした版（hidden + style.display + class で強制制御）
-
+// 安全にDOM更新しつつ、モーダルは確実に開閉する
 (function () {
   const $ = (id) => document.getElementById(id);
 
   function forceShow(el) {
     if (!el) return;
     el.hidden = false;
-    el.style.display = "flex"; // backdrop想定
+    el.style.display = "flex";
     el.classList.add("is-open");
     el.setAttribute("aria-hidden", "false");
   }
@@ -20,7 +19,7 @@
     el.setAttribute("aria-hidden", "true");
   }
 
-  // ---- minimal API used by game.js ----
+  // ---- modal ----
   function openNameModal() {
     const back = $("nameModalBackdrop");
     const input = $("nameInput");
@@ -40,7 +39,7 @@
     if (input) input.blur();
   }
 
-  // 画面更新系（存在しないIDでも落ちないように安全化）
+  // ---- text ----
   function setPlayerName(name) {
     const el = $("playerNameText");
     if (el) el.textContent = name || "（未設定）";
@@ -63,6 +62,11 @@
     if (el) el.textContent = text || "";
   }
 
+  function setCoachSub(text) {
+    const el = $("coachSub");
+    if (el) el.textContent = text || "—";
+  }
+
   function setAtmosphereText(text) {
     const el = $("atmosphereText");
     if (el) el.textContent = text || "";
@@ -78,6 +82,12 @@
     if (el) el.textContent = text || "";
   }
 
+  function setTurnStateText(text) {
+    const el = $("turnStateText");
+    if (el) el.textContent = text || "";
+  }
+
+  // ---- render ----
   function renderStats(player) {
     const grid = $("statsGrid");
     if (!grid || !player) return;
@@ -114,6 +124,9 @@
 
     const inj = $("injuryText");
     if (inj) inj.textContent = `${player.injuryCount ?? 0} / 3`;
+
+    const pn = $("portraitNote");
+    if (pn) pn.textContent = `${player.grade ?? 1}年 / 春風高校`;
   }
 
   function renderTeam(team) {
@@ -146,13 +159,12 @@
     if (tp) tp.textContent = `${total}`;
   }
 
-  // クリックで閉じる補助（backdropクリック）
+  // 背景クリックで閉じる（ただし名前未設定のときは閉じない）
   document.addEventListener("click", (e) => {
     const back = $("nameModalBackdrop");
     if (!back) return;
     if (e.target === back) {
-      // 背景クリックで閉じる（ユーザーが困らない保険）
-      closeNameModal();
+      // ゲーム側で未設定時の閉鎖は抑制する前提だが、念のためここでも閉じない
     }
   });
 
@@ -163,9 +175,11 @@
     setTurnText,
     setNextMeet,
     setCoachLine,
+    setCoachSub,
     setAtmosphereText,
     setSceneCaption,
     setSceneTitle,
+    setTurnStateText,
     renderStats,
     renderTeam,
   };
