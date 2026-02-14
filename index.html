@@ -10,19 +10,27 @@
   canvas { background:#0f2a4d; border-radius:16px; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
   .hud {
     max-width:1000px; margin:0 auto; color:#eaf2ff; padding:0 18px 18px;
-    display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    display:flex; gap:10px; flex-wrap:wrap; align-items:stretch;
   }
   .card {
     background:rgba(0,0,0,.35); border:1px solid rgba(255,255,255,.10); border-radius:14px;
     padding:10px 12px; display:flex; gap:10px; align-items:center;
     backdrop-filter: blur(6px);
   }
+  .grow { flex: 1 1 420px; }
+  .col { display:flex; flex-direction:column; gap:8px; min-width: 240px; }
   button {
     appearance:none; border:0; border-radius:14px; padding:10px 14px;
     background:#ffd400; color:#111; font-weight:900; cursor:pointer;
   }
+  button.secondary { background: rgba(255,255,255,.14); color:#eaf2ff; border:1px solid rgba(255,255,255,.18); font-weight:800; }
   button:disabled { opacity:.5; cursor:not-allowed; }
   .small { font-size:12px; opacity:.85; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  .tag { font-size:12px; padding:2px 8px; border-radius:999px; background: rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.12); }
+  .coach { align-items:flex-start; }
+  .coach b { display:block; margin-bottom:4px; }
+  .coach .msg { line-height: 1.35; }
 </style>
 </head>
 
@@ -32,53 +40,189 @@
   </div>
 
   <div class="hud">
-    <div class="card">
-      <div><b>100m（MVP）</b><div class="small">タップでスタート（1回勝負）。やり直しはページ更新。</div></div>
+    <div class="card grow coach">
+      <div style="display:flex; gap:10px; align-items:flex-start;">
+        <div class="tag" id="dateTag">1年4月上旬</div>
+        <div>
+          <b>監督（優しい口調）</b>
+          <div class="msg" id="coachMsg">待機中です。まずはスタートしてみましょう。</div>
+          <div class="small" id="eventHint"></div>
+        </div>
+      </div>
     </div>
-    <button id="btnStart">スタート</button>
-    <div class="card" id="status">待機中</div>
+
+    <div class="col">
+      <div class="card">
+        <div>
+          <b>100m（MVP）</b>
+          <div class="small">タップでスタート（1回勝負）。やり直しはページ更新。</div>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button id="btnStart" style="flex:1;">スタート</button>
+        <button id="btnNext" class="secondary" style="flex:1;">次のターンへ</button>
+      </div>
+
+      <div class="card mono" id="status">待機中</div>
+    </div>
   </div>
 
 <script>
 /** =========================
- *  改良1：名前入力＋保存
- *  - localStorage に保存
- *  - ランナー表示に反映
+ *  改良1：名前入力＋保存（維持）
  * ========================= */
-const STORAGE_KEY = "sprintDynasty_playerName_v1";
+const STORAGE_KEY_NAME = "sprintDynasty_playerName_v1";
 function getPlayerName(){
-  let name = (localStorage.getItem(STORAGE_KEY) || "").trim();
+  let name = (localStorage.getItem(STORAGE_KEY_NAME) || "").trim();
   if (!name){
     name = prompt("プレイヤー名を入力してください（後から変更できます）", "ケイスケ") || "";
     name = name.trim();
     if (!name) name = "あなた";
-    localStorage.setItem(STORAGE_KEY, name);
+    localStorage.setItem(STORAGE_KEY_NAME, name);
   }
   return name;
 }
 function setPlayerName(name){
-  localStorage.setItem(STORAGE_KEY, String(name || "あなた").trim() || "あなた");
+  localStorage.setItem(STORAGE_KEY_NAME, String(name || "あなた").trim() || "あなた");
 }
-
 const playerName = getPlayerName();
 
+/** =========================
+ *  改良2：ターン進行＋監督の一言
+ *  - 1ヶ月=上旬/中旬/下旬の3ターン
+ *  - 大会は「3ターン前」に監督が告知
+ * ========================= */
+const STORAGE_KEY_TURN = "sprintDynasty_turnIndex_v1";
+function getTurnIndex(){
+  const v = Number(localStorage.getItem(STORAGE_KEY_TURN) || "0");
+  return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
+}
+function setTurnIndex(v){
+  localStorage.setItem(STORAGE_KEY_TURN, String(Math.max(0, Math.floor(v))));
+}
+let turnIndex = getTurnIndex(); // 0=start: 1年4月上旬
+
+// 3年分：4月(開始)〜翌々年3月
+const MONTHS = ["4月","5月","6月","7月","8月","9月","10月","11月","12月","1月","2月","3月"];
+const TERMS  = ["上旬","中旬","下旬"];
+
+// index -> (year, month, term)
+function getDateLabel(idx){
+  const monthNo = Math.floor(idx/3) % 12;
+  const termNo  = idx % 3;
+  const yearNo  = 1 + Math.floor(Math.floor(idx/3) / 12); // 1〜3
+  const ym = MONTHS[monthNo] || "??月";
+  const tt = TERMS[termNo] || "";
+  return `${yearNo}年${ym}${tt}`;
+}
+function isInRange(idx, startIdx, endIdx){ return idx >= startIdx && idx <= endIdx; }
+
+// 大会（あなたの仕様を反映：アジア大会は10月中旬〜12月上旬、合宿時期も変更済）
+function idxOf(yearNo, monthStr, termStr){
+  const m = MONTHS.indexOf(monthStr);
+  const t = TERMS.indexOf(termStr);
+  if (m < 0 || t < 0) return 0;
+  const monthFromStart = (yearNo-1)*12 + m; // start=Y1 Apr => m=0
+  return monthFromStart*3 + t;
+}
+
+// MVPでは「開催ターン」だけ持っておく（勝敗条件/出場枠は次の改良で実装）
+const EVENTS = [
+  // 1年：判定が必要な大会
+  { id:"Y1_Rookie_District", name:"新人戦 地区大会", when: idxOf(1,"8月","下旬") },
+  { id:"Y1_Rookie_Pref",     name:"新人戦 県大会",   when: idxOf(1,"9月","下旬") },
+  { id:"Y1_Rookie_Block",    name:"新人戦 ブロック大会", when: idxOf(1,"10月","中旬") },
+
+  // 2年：高体連〜（勝ち上がりは次フェーズ）
+  { id:"Y2_Inter_District", name:"高体連 地区大会", when: idxOf(2,"5月","中旬") },
+  { id:"Y2_Rookie_Pref",    name:"新人戦 県大会",   when: idxOf(2,"9月","下旬") },
+  { id:"Y2_Rookie_Block",   name:"新人戦 ブロック大会", when: idxOf(2,"10月","中旬") },
+
+  // 3年：最短終了がある本線（ここも次フェーズで勝敗実装）
+  { id:"Y3_Inter_District", name:"高体連 地区大会", when: idxOf(3,"5月","中旬") },
+];
+
+// 合宿（メニューは次フェーズ。今回は雰囲気メッセージだけ）
+const CAMP = {
+  summer: { name:"夏季合宿", start: idxOf(1,"7月","中旬"), end: idxOf(1,"8月","中旬") },
+  winter: { name:"冬季合宿", start: idxOf(1,"1月","中旬"), end: idxOf(1,"2月","上旬") },
+};
+
+function getUpcomingEvent(idx){
+  // 直近のイベント（今以降で最も近い）
+  const future = EVENTS.filter(e => e.when >= idx).sort((a,b)=>a.when-b.when);
+  return future[0] || null;
+}
+
+function buildCoachMessage(idx){
+  const label = getDateLabel(idx);
+
+  // 合宿中
+  if (isInRange(idx, CAMP.summer.start, CAMP.summer.end)){
+    return {
+      title: label,
+      msg: `いまは${CAMP.summer.name}です。普段より伸びますが、疲れが溜まりやすいですよ。`,
+      hint: "（合宿メニューは次の改良で実装します）"
+    };
+  }
+  if (isInRange(idx, CAMP.winter.start, CAMP.winter.end)){
+    return {
+      title: label,
+      msg: `いまは${CAMP.winter.name}です。冬向けの練習で土台を作りましょう。`,
+      hint: "（合宿メニューは次の改良で実装します）"
+    };
+  }
+
+  // 大会3ターン前告知
+  const soon = EVENTS.find(e => e.when - idx === 3);
+  if (soon){
+    return {
+      title: label,
+      msg: `あと3ターンで「${soon.name}」です。調子を上げていきましょう。`,
+      hint: "（出場判定は次の改良で実装します：能力だけで判定）"
+    };
+  }
+
+  // 大会当日
+  const today = EVENTS.find(e => e.when === idx);
+  if (today){
+    return {
+      title: label,
+      msg: `今日は「${today.name}」です。落ち着いて、自分の走りをしましょう。`,
+      hint: "（このMVPでは“単発レース”で雰囲気確認します）"
+    };
+  }
+
+  // 通常アドバイス（ランダム）
+  const tips = [
+    "スタートと加速が勝負どころです。基礎を丁寧にやりましょう。",
+    "技術を磨くと伸びが安定します。焦らず積み上げましょう。",
+    "筋力は後半の失速を抑えます。土台を作るのも大事ですよ。",
+    "疲れを溜めすぎるとケガに繋がります。休む勇気も必要です。",
+    "大会が近づくほど、やることを絞ると強くなれますよ。",
+  ];
+  const nextEv = getUpcomingEvent(idx);
+  const msg = tips[Math.floor(Math.random()*tips.length)];
+  const hint = nextEv ? `次の大会：${getDateLabel(nextEv.when)}「${nextEv.name}」` : "次の大会は未定です。";
+
+  return { title: label, msg, hint };
+}
+
 /** ========= Canvas ========= **/
+const dateTag = document.getElementById("dateTag");
+const coachMsg = document.getElementById("coachMsg");
+const eventHint = document.getElementById("eventHint");
+
 const canvas = document.getElementById("cv");
 const ctx = canvas.getContext("2d");
 const W = canvas.width, H = canvas.height;
 
 const btnStart = document.getElementById("btnStart");
+const btnNext  = document.getElementById("btnNext");
 const statusEl = document.getElementById("status");
 
-const TRACK = {
-  left: 85,
-  right: 955,
-  top: 92,
-  laneH: 48,
-  lanes: 8,
-  finishX: 920
-};
-
+const TRACK = { left: 85, right: 955, top: 92, laneH: 48, lanes: 8, finishX: 920 };
 const COLORS = ["#ffd400","#66d9ff","#ff6b6b","#a7ff83","#c792ea","#f78c6c","#89ddff","#f6f7ff"];
 
 let state = "idle"; // idle | running | finished
@@ -99,7 +243,6 @@ function makeStats(base){
 
 function buildRunners(){
   const runners = [];
-
   runners.push({ id:"P001", name:playerName, school:"春風高校", key:true, portrait:"🙂", stats: makeStats(55) });
   runners.push({ id:"R_SAME", name:"風間 迅", school:"槍ヶ岳高校", key:true, portrait:"😼", stats: makeStats(60) });
   runners.push({ id:"BOSS", name:"九条 蒼真", school:"富士高校", key:true, portrait:"😤", stats: makeStats(62) });
@@ -115,7 +258,6 @@ function buildRunners(){
     runners.push({ id:"M_"+name, name, school, key:false, portrait:"", stats: makeStats(54) });
   }
 
-  // レーンシャッフル
   for (let i=runners.length-1;i>0;i--){
     const j=Math.floor(Math.random()*(i+1));
     [runners[i], runners[j]] = [runners[j], runners[i]];
@@ -128,8 +270,6 @@ function buildRunners(){
     r.v = 0;
     r.done = false;
     r.time = null;
-
-    // アニメ用
     r.animPhase = rand(0, Math.PI*2);
   });
 
@@ -265,72 +405,55 @@ function drawTrack(){
   ctx.fillText("100m", TRACK.left, 46);
 }
 
-/** =========================
- *  走るモーション強化（Canvas描画）
- *  - 上下バウンス
- *  - 前傾
- *  - 腕振り強め
- *  - 足の踏み替え（接地感）
- * ========================= */
 function drawRunnerHuman(r, now){
   const laneColor = COLORS[r.lane % COLORS.length];
-
   const running = (state === "running") && !r.done;
 
-  // runner speed factor for animation feel
   const speed01 = clamp(r.v / 4.0, 0.2, 1.0);
+  const phase = running ? (now/90 * (0.8 + speed01*1.2) + r.animPhase) : r.animPhase;
 
-  // phase: move faster with speed
-  const phase = running ? (now/80 * (0.8 + speed01*1.2) + r.animPhase) : r.animPhase;
+  // （いまはバウンス強めになりがちなので控えめ）
+  const bounce = running ? Math.sin(phase) * (1.0 + speed01*0.6) : 0;
+  const lean = running ? (0.16 + speed01*0.08) : 0.10;
 
-  // bounce & lean
-  const bounce = running ? Math.sin(phase) * (2.2 + speed01*1.4) : 0;
-  const lean = running ? (0.18 + speed01*0.10) : 0.10; // radians
-
-  // limb swings
   const swing = running ? Math.sin(phase) : 0;
   const swing2 = running ? Math.sin(phase + Math.PI/2) : 0;
 
-  // base body position (center)
   const cx = r.x + 12;
   const cy = r.y + 28 + bounce;
 
-  // shadow (changes with bounce)
+  // shadow
   ctx.fillStyle = "rgba(0,0,0,.28)";
   ctx.beginPath();
-  ctx.ellipse(cx+4, cy+26, 12 - bounce*0.25, 4 - bounce*0.08, 0, 0, Math.PI*2);
+  ctx.ellipse(cx+4, cy+26, 12 - bounce*0.15, 4 - bounce*0.05, 0, 0, Math.PI*2);
   ctx.fill();
 
   ctx.save();
   ctx.translate(cx, cy);
   ctx.rotate(-lean);
 
-  // Legs (two, alternating; one forward, one back)
+  // legs
   ctx.strokeStyle = "rgba(0,0,0,.55)";
-  ctx.lineWidth = 3.2;
+  ctx.lineWidth = 3.1;
   ctx.lineCap = "round";
 
-  const legSpread = 10 + speed01*6;
-  const kneeLift = 5 + speed01*4;
-
-  // front leg
+  const legSpread = 12 + speed01*6;
   const lf = swing * legSpread;
+  const lb = -swing * legSpread;
+
   ctx.beginPath();
   ctx.moveTo(-2, 12);
   ctx.lineTo(-4 + lf*0.18, 22);
-  // foot contact
   ctx.lineTo(-6 + lf*0.22, 24 + Math.max(0, -swing)*2);
   ctx.stroke();
 
-  // back leg
-  const lb = -swing * legSpread;
   ctx.beginPath();
   ctx.moveTo( 2, 12);
   ctx.lineTo( 4 + lb*0.18, 22);
   ctx.lineTo( 6 + lb*0.22, 24 + Math.max(0, swing)*2);
   ctx.stroke();
 
-  // Torso (uniform)
+  // torso
   ctx.fillStyle = laneColor;
   roundRect(-9, -4, 18, 20, 5, true, false);
 
@@ -341,30 +464,28 @@ function drawRunnerHuman(r, now){
   ctx.font = "700 9px system-ui";
   ctx.fillText(String(r.lane+1), -2.5, 12);
 
-  // Arms (stronger swing)
+  // arms
   ctx.strokeStyle = "rgba(0,0,0,.55)";
   ctx.lineWidth = 3.0;
 
-  const armSpread = 14 + speed01*8;
-  const a1 = swing2 * armSpread;     // opposite timing
+  const armSpread = 16 + speed01*8;
+  const a1 = swing2 * armSpread;
   const a2 = -swing2 * armSpread;
 
-  // left arm
   ctx.beginPath();
   ctx.moveTo(-8, 0);
   ctx.lineTo(-14 + a1*0.20, 6 + (-swing2)*2);
   ctx.stroke();
 
-  // right arm
   ctx.beginPath();
   ctx.moveTo( 8, 0);
   ctx.lineTo( 14 + a2*0.20, 6 + (swing2)*2);
   ctx.stroke();
 
-  // Head
+  // head
   ctx.fillStyle = "rgba(255,255,255,.95)";
   ctx.beginPath();
-  ctx.arc(0, -12 - (running ? Math.max(0, swing)*0.8 : 0), 6.2, 0, Math.PI*2);
+  ctx.arc(0, -12, 6.2, 0, Math.PI*2);
   ctx.fill();
   ctx.strokeStyle = "rgba(0,0,0,.25)";
   ctx.lineWidth = 1.4;
@@ -372,7 +493,7 @@ function drawRunnerHuman(r, now){
 
   ctx.restore();
 
-  // label (right side)
+  // label
   const labelX = TRACK.finishX + 14;
   const labelY = r.y + 25;
 
@@ -383,7 +504,7 @@ function drawRunnerHuman(r, now){
   ctx.font = "12px system-ui";
   ctx.fillText(`${r.name}（${r.school}）`, labelX, labelY);
 
-  // portrait bubble for key characters (emoji for now)
+  // portrait bubble
   if (r.key){
     const bx = r.x + 40;
     const by = r.y - 10;
@@ -435,7 +556,8 @@ function loop(now){
     runners.forEach(r => updateRunner(r, dt));
     if (allDone()){
       state = "finished";
-      btnStart.disabled = true; // 一発勝負
+      btnStart.disabled = true;
+      btnNext.disabled = false;
     }
   }
 
@@ -444,23 +566,50 @@ function loop(now){
 }
 requestAnimationFrame(loop);
 
+function refreshCoach(){
+  dateTag.textContent = getDateLabel(turnIndex);
+  const info = buildCoachMessage(turnIndex);
+  coachMsg.textContent = info.msg;
+  eventHint.textContent = info.hint || "";
+}
+
 function startRace(){
   if (state !== "idle") return;
   state = "running";
   t0 = performance.now();
   btnStart.disabled = true;
+  btnNext.disabled = true;
   statusEl.textContent = "レース中…";
 }
 
+function nextTurn(){
+  // ターン進行（育成メニューは次の改良で追加）
+  turnIndex += 1;
+  setTurnIndex(turnIndex);
+
+  // 次ターンに入ったら“新しい日”としてレースもやれる（練習試合扱い）
+  // ※公式大会の仕組み（予選/決勝/出場判定）は次の改良で
+  state = "idle";
+  runners = buildRunners();
+  btnStart.disabled = false;
+  btnNext.disabled = false;
+  statusEl.textContent = "待機中（次のターン）";
+
+  refreshCoach();
+}
+
 btnStart.addEventListener("click", startRace);
+btnNext.addEventListener("click", nextTurn);
 canvas.addEventListener("click", ()=>{ if (state === "idle") startRace(); });
 
-/** 追加：名前を変えたい時の裏コマンド（開発用）
- *  キーボードがある環境なら N で変更できる
- */
+// 初期表示
+btnNext.disabled = false;
+refreshCoach();
+
+/** 開発用：Nで名前変更 */
 window.addEventListener("keydown", (e)=>{
   if (e.key.toLowerCase() === "n"){
-    const next = (prompt("プレイヤー名を変更します", localStorage.getItem(STORAGE_KEY) || playerName) || "").trim();
+    const next = (prompt("プレイヤー名を変更します", localStorage.getItem(STORAGE_KEY_NAME) || playerName) || "").trim();
     if (next){
       setPlayerName(next);
       location.reload();
