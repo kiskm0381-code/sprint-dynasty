@@ -1,9 +1,0 @@
-{
-  "powerhouse_schools": [
-    {"id":"S_FUJI","name":"富士高校","style":"balanced"},
-    {"id":"S_YARI","name":"槍ヶ岳高校","style":"top_speed"},
-    {"id":"S_KITA","name":"北岳高校","style":"power"},
-    {"id":"S_HODAKA","name":"奥穂高高校","style":"tech"},
-    {"id":"S_TAISETSU","name":"大雪山高校","style":"endurance"}
-  ]
-}
