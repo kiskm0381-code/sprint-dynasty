@@ -33,21 +33,18 @@
 
   <div class="hud">
     <div class="card">
-      <div><b>100m（MVP）</b><div class="small">タップでスタート。もう一回で再走。</div></div>
+      <div><b>100m（MVP）</b><div class="small">タップでスタート（1回勝負）。やり直しはページ更新。</div></div>
     </div>
     <button id="btnStart">スタート</button>
-    <button id="btnReset">リセット</button>
     <div class="card" id="status">待機中</div>
   </div>
 
 <script>
-/** ========= MVP: 8-lane 100m race ========= **/
 const canvas = document.getElementById("cv");
 const ctx = canvas.getContext("2d");
 const W = canvas.width, H = canvas.height;
 
 const btnStart = document.getElementById("btnStart");
-const btnReset = document.getElementById("btnReset");
 const statusEl = document.getElementById("status");
 
 const TRACK = {
@@ -59,11 +56,7 @@ const TRACK = {
   finishX: 920
 };
 
-// シルエットカラー
 const COLORS = ["#ffd400","#66d9ff","#ff6b6b","#a7ff83","#c792ea","#f78c6c","#89ddff","#f6f7ff"];
-
-// 主要人物（吹き出し）
-const KEY_IDS = new Set(["P001","R_SAME","BOSS"]);
 
 let state = "idle"; // idle | running | finished
 let t0 = 0;
@@ -71,7 +64,6 @@ let t0 = 0;
 function rand(min, max) { return min + Math.random()*(max-min); }
 function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
 
-/** 雰囲気ステータス */
 function makeStats(base){
   const SPD = clamp(Math.round(base + rand(-4,4)), 20, 99);
   const ACC = clamp(Math.round(base + rand(-4,4)), 20, 99);
@@ -100,7 +92,6 @@ function buildRunners(){
     runners.push({ id:"M_"+name, name, school, key:false, portrait:"", stats: makeStats(54) });
   }
 
-  // レーンシャッフル
   for (let i=runners.length-1;i>0;i--){
     const j=Math.floor(Math.random()*(i+1));
     [runners[i], runners[j]] = [runners[j], runners[i]];
@@ -144,7 +135,6 @@ function updateRunner(r, dt){
 
   r.v += (target - r.v) * accel;
   const step = (r.v + jitter) * fatigueFactor * 60 * dt;
-
   r.x += Math.max(0.5, step);
 
   if (r.x >= TRACK.finishX){
@@ -171,14 +161,12 @@ function roundRect(x, y, w, h, r, fill, stroke) {
 }
 
 function drawStadiumBg(){
-  // 夜のスタジアム風グラデ
   const g = ctx.createLinearGradient(0,0,0,H);
   g.addColorStop(0, "#0a1c35");
   g.addColorStop(1, "#081326");
   ctx.fillStyle = g;
   ctx.fillRect(0,0,W,H);
 
-  // ライト風のぼんやり
   ctx.fillStyle = "rgba(255,255,255,.06)";
   ctx.beginPath(); ctx.arc(160, 80, 120, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(840, 70, 140, 0, Math.PI*2); ctx.fill();
@@ -187,13 +175,12 @@ function drawStadiumBg(){
 function drawTrack(){
   drawStadiumBg();
 
-  // 青いトラック面
   const pad = 24;
   const trackX = pad, trackY = pad, trackW = W-pad*2, trackH = H-pad*2;
   ctx.fillStyle = "#1d4f9a";
   roundRect(trackX, trackY, trackW, trackH, 18, true, false);
 
-  // トラックの質感（斜めストライプ）
+  // 質感
   ctx.save();
   ctx.globalAlpha = 0.08;
   ctx.strokeStyle = "#ffffff";
@@ -206,11 +193,11 @@ function drawTrack(){
   }
   ctx.restore();
 
-  // 内側フィールド（濃い青）
+  // 内側
   ctx.fillStyle = "rgba(0,0,0,.18)";
   roundRect(TRACK.left-28, TRACK.top-28, (TRACK.finishX-(TRACK.left-28))+60, TRACK.lanes*TRACK.laneH+56, 16, true, false);
 
-  // レーンライン
+  // レーン
   ctx.strokeStyle = "rgba(255,255,255,.42)";
   ctx.lineWidth = 2;
   for (let i=0;i<=TRACK.lanes;i++){
@@ -228,7 +215,7 @@ function drawTrack(){
     ctx.fillText(String(i+1), TRACK.left-22, TRACK.top + i*TRACK.laneH + 30);
   }
 
-  // スタートライン
+  // スタート
   ctx.strokeStyle = "rgba(255,255,255,.92)";
   ctx.lineWidth = 5;
   ctx.beginPath();
@@ -236,7 +223,7 @@ function drawTrack(){
   ctx.lineTo(TRACK.left, TRACK.top + TRACK.lanes*TRACK.laneH);
   ctx.stroke();
 
-  // ゴールライン（市松）
+  // ゴール（市松）
   const fy0 = TRACK.top, fy1 = TRACK.top + TRACK.lanes*TRACK.laneH;
   const block = 10;
   for(let y=fy0; y<fy1; y+=block){
@@ -245,28 +232,86 @@ function drawTrack(){
     ctx.fillRect(TRACK.finishX, y, 10, block);
   }
 
-  // 100m 表記
+  // 100m
   ctx.fillStyle = "rgba(255,255,255,.9)";
   ctx.font = "900 18px system-ui";
   ctx.fillText("100m", TRACK.left, 46);
 }
 
-function drawRunner(r){
-  const x = r.x;
-  const y = r.y + 7;
-  const w = 18, h = 34;
+/** 四角→人型（ユニフォーム） */
+function drawRunnerHuman(r, now){
+  const laneColor = COLORS[r.lane % COLORS.length];
+
+  // 走る“足/腕”の簡易アニメ（走行中だけ揺らす）
+  const running = (state === "running") && !r.done;
+  const phase = running ? (now/120 + r.lane*0.3) : 0; // 速度差っぽさ
+  const swing = running ? Math.sin(phase) : 0;
+
+  // 人の基準座標（胴体中心）
+  const x = r.x + 10;
+  const y = r.y + 26;
 
   // 影
   ctx.fillStyle = "rgba(0,0,0,.25)";
-  ctx.fillRect(x+2, y+3, w, h);
+  ctx.beginPath();
+  ctx.ellipse(x+3, y+22, 10, 4, 0, 0, Math.PI*2);
+  ctx.fill();
 
-  // 本体
-  ctx.fillStyle = COLORS[r.lane % COLORS.length];
-  ctx.fillRect(x, y, w, h);
+  // 足（2本）
+  ctx.strokeStyle = "rgba(0,0,0,.45)";
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  const legA = swing * 10;
+  const legB = -swing * 10;
 
-  // ラベル（読みやすいように右側へ寄せる）
+  ctx.beginPath();
+  ctx.moveTo(x-2, y+14);
+  ctx.lineTo(x-6 + legA*0.15, y+26);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x+2, y+14);
+  ctx.lineTo(x+6 + legB*0.15, y+26);
+  ctx.stroke();
+
+  // 胴体（ユニフォーム）
+  ctx.fillStyle = laneColor;
+  roundRect(x-8, y-6, 16, 18, 4, true, false);
+
+  // ゼッケン風
+  ctx.fillStyle = "rgba(255,255,255,.85)";
+  roundRect(x-6, y+1, 12, 8, 2, true, false);
+  ctx.fillStyle = "rgba(0,0,0,.65)";
+  ctx.font = "700 8px system-ui";
+  ctx.fillText(String(r.lane+1), x-3, y+8);
+
+  // 腕（2本）
+  ctx.strokeStyle = "rgba(0,0,0,.45)";
+  const armA = swing * 10;
+  const armB = -swing * 10;
+
+  ctx.beginPath();
+  ctx.moveTo(x-6, y-2);
+  ctx.lineTo(x-14 + armA*0.25, y+4);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.moveTo(x+6, y-2);
+  ctx.lineTo(x+14 + armB*0.25, y+4);
+  ctx.stroke();
+
+  // 頭
+  ctx.fillStyle = "rgba(255,255,255,.92)";
+  ctx.beginPath();
+  ctx.arc(x, y-14, 6, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,.25)";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // ラベル（右側）
   const labelX = TRACK.finishX + 14;
-  const labelY = y + 16;
+  const labelY = r.y + 25;
 
   ctx.fillStyle = "rgba(0,0,0,.55)";
   roundRect(labelX-6, labelY-14, 220, 22, 8, true, false);
@@ -275,10 +320,10 @@ function drawRunner(r){
   ctx.font = "12px system-ui";
   ctx.fillText(`${r.name}（${r.school}）`, labelX, labelY);
 
-  // key bubble（顔）
+  // 主要人物の吹き出し（いまは絵文字。後で画像に差し替え）
   if (r.key){
-    const bx = x + 30;
-    const by = y - 46;
+    const bx = r.x + 36;
+    const by = r.y - 10;
     ctx.fillStyle = "rgba(255,255,255,.92)";
     roundRect(bx, by, 44, 30, 8, true, false);
     ctx.beginPath();
@@ -294,9 +339,9 @@ function drawRunner(r){
   }
 }
 
-function draw(){
+function draw(now){
   drawTrack();
-  runners.forEach(drawRunner);
+  runners.forEach(r => drawRunnerHuman(r, now));
 
   if (state === "finished"){
     const sorted = [...runners].sort((a,b)=>a.time - b.time);
@@ -314,7 +359,7 @@ function draw(){
     });
 
     const win = sorted[0];
-    statusEl.textContent = `優勝：${win.name}（${win.time.toFixed(2)}s）`;
+    statusEl.textContent = `大会終了：優勝 ${win.name}（${win.time.toFixed(2)}s）`;
   }
 }
 
@@ -327,38 +372,24 @@ function loop(now){
     runners.forEach(r => updateRunner(r, dt));
     if (allDone()){
       state = "finished";
-      btnStart.disabled = false;
-      btnStart.textContent = "もう一回";
+      btnStart.disabled = true; // 一発勝負なので固定
     }
   }
 
-  draw();
+  draw(now);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
 function startRace(){
-  if (state === "idle"){
-    state = "running";
-    t0 = performance.now();
-    btnStart.disabled = true;
-    statusEl.textContent = "レース中…";
-  } else if (state === "finished"){
-    resetRace();
-    startRace();
-  }
-}
-
-function resetRace(){
-  runners = buildRunners();
-  state = "idle";
-  btnStart.disabled = false;
-  btnStart.textContent = "スタート";
-  statusEl.textContent = "待機中";
+  if (state !== "idle") return;
+  state = "running";
+  t0 = performance.now();
+  btnStart.disabled = true;
+  statusEl.textContent = "レース中…";
 }
 
 btnStart.addEventListener("click", startRace);
-btnReset.addEventListener("click", resetRace);
 canvas.addEventListener("click", ()=>{ if (state === "idle") startRace(); });
 </script>
 </body>
