@@ -1,7 +1,7 @@
 // game.js
 // ホーム画面：ターン進行・練習・疲労・怪我（改良3）
 // 目的：疲労が「戦略」になる／怪我が「代償」になる／3回で引退END
-// 追加：1ターンで実行できる行動は1つだけ（次ターンへ以外は1回でロック）
+// 追加：1ターンで実行できる行動は1つ（行動済みロック）
 
 (function () {
   const KEY = "sd_save_v1";
@@ -52,8 +52,8 @@
         campWinter: false,
         allJapanCamp: false,
       },
-      lastEvent: "",         // 直近イベント文（怪我など）
-      turnActionUsed: false, // ★追加：このターンで行動済みか（次ターンへ以外）
+      lastEvent: "",          // 直近イベント文（怪我など）
+      turnActionUsed: false,  // ★ 追加：このターンで行動済みか
     };
   }
 
@@ -82,6 +82,11 @@
 
     if (state.player.retired) {
       return "よく頑張った。結果だけが全てじゃない。君の走りは、君のものだ。";
+    }
+
+    // 行動済みのときは固定で促す
+    if (state.turnActionUsed) {
+      return "今日はここまで。明日に繋げよう。次ターンへ進もうか。";
     }
 
     // 怪我直後は固定コメント
@@ -180,7 +185,7 @@
     // メニュー強度で補正
     prob *= (MENU_INTENSITY[action] || 1.0);
 
-    // 隠し特性（成長が高いほど無理しがち）→わずかに怪我率UP
+    // 隠し特性（軽く）：growth高いほど無理しがち→怪我率わずか増
     const growth = p.growthTraits?.growth ?? 100;
     prob *= SD_DATA.clamp(0.90 + (growth - 100) * 0.003, 0.85, 1.15);
 
@@ -223,7 +228,6 @@
 
     const s = p.stats;
 
-    // 練習効果（ベース）
     const base = {
       start:   { ACC: +3, TEC: +2, fatigue: +16, vibe: "スタートの音が、体に入る。" },
       tempo:   { TEC: +3, MEN: +2, fatigue: +12, vibe: "フォームが一瞬だけ“揃う”。" },
@@ -236,20 +240,13 @@
 
     if (!base) return;
 
-    // 表示用の雰囲気
     SD_UI.setAtmosphereText(atmosphereText(state));
     SD_UI.setSceneCaption(base.vibe);
 
-    // 疲労による練習効率
     const fatigueEff = trainingEfficiencyByFatigue(p.fatigue);
-
-    // 成長特性（0.85〜1.15）
     const growthEff = (p.growthTraits?.growth ?? 100) / 100;
-
-    // 総合倍率：疲労×成長
     const mult = fatigueEff * growthEff;
 
-    // stats update
     if (base.all) {
       for (const k of ["SPD","ACC","POW","TEC","STA","MEN"]) {
         s[k] = clampStat(s[k] + Math.max(0, Math.round(base.all * mult)));
@@ -260,19 +257,16 @@
       }
     }
 
-    // fatigue update
     if (typeof base.fatigue === "number") {
       p.fatigue = SD_DATA.clamp(p.fatigue + base.fatigue, 0, 100);
     }
 
-    // 疲労高×強練習で怪我抽選
     const injured = injuryRoll(state, action);
     if (injured) {
       applyInjury(state);
       SD_UI.setSceneCaption("ピキッ…と嫌な感触。胸が冷える。");
     }
 
-    // 疲労100到達でも確定怪我（保険）
     if (!p.retired && p.fatigue >= 100) {
       applyInjury(state);
       SD_UI.setSceneCaption("限界を越えた。足が言うことをきかない。");
@@ -300,9 +294,6 @@
   function advanceTurn(state) {
     if (state.player.retired) return;
 
-    // ★ターン開始：行動未使用に戻す
-    state.turnActionUsed = false;
-
     // 次大会までカウント
     if (state.nextMeet.turnsLeft > 0) state.nextMeet.turnsLeft -= 1;
 
@@ -312,16 +303,17 @@
       state.turn.term = 1;
       state.turn.month += 1;
 
-      // 年度跨ぎ（簡易）
       if (state.turn.month === 13) {
         state.turn.month = 4;
         state.turn.grade += 1;
         state.player.grade = state.turn.grade;
 
-        // チーム進級（簡易）
         for (const m of state.team) m.grade = Math.min(3, m.grade + 1);
       }
     }
+
+    // ★ 次ターンに入ったので行動ロック解除
+    state.turnActionUsed = false;
 
     // ターン開始の空気
     state.lastEvent = "";
@@ -354,57 +346,70 @@
       SD_UI.setPlayerName(n);
       save(state);
       SD_UI.closeNameModal();
-      refreshActionButtons(state); // ★名前確定で操作可能に
       return true;
     }
 
-    randBtn.addEventListener("click", () => {
-      input.value = SD_DATA.randomPlayerName();
-      input.focus();
-    });
+    if (randBtn) {
+      randBtn.addEventListener("click", () => {
+        if (input) {
+          input.value = SD_DATA.randomPlayerName();
+          input.focus();
+        }
+      });
+    }
 
-    saveBtn.addEventListener("click", () => {
-      applyName(input.value);
-    });
+    if (saveBtn) {
+      saveBtn.addEventListener("click", () => {
+        applyName(input ? input.value : "");
+      });
+    }
 
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") applyName(input.value);
-    });
+    if (input) {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") applyName(input.value);
+      });
+    }
 
-    back.addEventListener("click", (e) => {
-      if (e.target === back) {
-        // 名前必須のため閉じない
-      }
-    });
+    if (back) {
+      back.addEventListener("click", (e) => {
+        // 名前が未設定のときは背景クリックで閉じない（詰み防止はui.js側に任せない）
+        if (e.target === back) {
+          if (state.player.name && state.player.name.trim()) {
+            SD_UI.closeNameModal();
+          }
+        }
+      });
+    }
   }
 
   // ----------------------------
-  // Actions Lock / Enable
+  // 1ターン1行動ロック：UI
   // ----------------------------
-  function refreshActionButtons(state) {
-    const hasName = !!(state.player.name && state.player.name.trim());
+  function updateActionLockUI(state) {
+    const used = !!state.turnActionUsed;
     const btns = document.querySelectorAll("button[data-action]");
-    btns.forEach(b => {
-      const a = b.getAttribute("data-action");
-      if (!a) return;
+    btns.forEach(btn => {
+      const action = btn.getAttribute("data-action");
+      if (!action) return;
 
       // 引退は全部無効
-      if (state.player.retired) { b.disabled = true; return; }
-
-      // 名前未設定なら全部無効（モーダルで決めてもらう）
-      if (!hasName) { b.disabled = true; return; }
-
-      // 1ターン1行動：行動済みなら next 以外を無効
-      if (state.turnActionUsed) {
-        b.disabled = (a !== "next");
+      if (state.player.retired) {
+        btn.disabled = true;
         return;
       }
 
-      // 通常
-      b.disabled = false;
+      // 行動済みなら next 以外無効
+      if (used) {
+        btn.disabled = (action !== "next");
+      } else {
+        btn.disabled = false;
+      }
     });
   }
 
+  // ----------------------------
+  // Actions
+  // ----------------------------
   function lockActionsIfRetired(state) {
     if (!state.player.retired) return;
 
@@ -415,59 +420,57 @@
     SD_UI.setSceneCaption("— 引退 END — もう一度走りたくなったら、また最初から。");
   }
 
-  function applyUi(state) {
-    const t = state.turn;
-    SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
-    SD_UI.setNextMeet(nextMeetText(state));
-    SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
-
-    SD_UI.renderStats(state.player);
-    SD_UI.renderTeam(state.team);
-    SD_UI.setCoachLine(coachLineForTurn(state));
-
-    if (window.SD_SCENE) SD_SCENE.setMode(state.selectedMenu);
-
-    refreshActionButtons(state);
-    lockActionsIfRetired(state);
-
-    save(state);
-  }
-
   function wireActions(state) {
     const btns = document.querySelectorAll("button[data-action]");
     btns.forEach(btn => {
       btn.addEventListener("click", () => {
         if (state.player.retired) return;
 
-        // 名前必須
+        // 名前未設定なら先に入力
         if (!state.player.name || !state.player.name.trim()) {
           SD_UI.openNameModal();
-          refreshActionButtons(state);
           return;
         }
 
         const action = btn.getAttribute("data-action");
         if (!action) return;
 
-        // ★1ターン1行動ロック：行動済みなら next 以外は無視
-        if (state.turnActionUsed && action !== "next") {
-          SD_UI.setCoachLine("今日は一本で十分だよ。次のターンでまた積もう。");
-          refreshActionButtons(state);
-          save(state);
-          return;
-        }
-
         if (action === "next") {
           advanceTurn(state);
         } else {
+          // ★ 行動済みなら何もしない
+          if (state.turnActionUsed) {
+            SD_UI.setCoachLine("1ターンでできる行動は1つだけだよ。次ターンへ進もう。");
+            updateActionLockUI(state);
+            return;
+          }
+
           setMenu(state, action);
           applyTraining(state, action);
 
-          // ★行動したのでロック
+          // ★ 行動済みにしてロック
           state.turnActionUsed = true;
         }
 
-        applyUi(state);
+        // UI反映
+        const t = state.turn;
+        SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
+        SD_UI.setNextMeet(nextMeetText(state));
+        SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
+
+        SD_UI.renderStats(state.player);
+        SD_UI.renderTeam(state.team);
+
+        SD_UI.setCoachLine(coachLineForTurn(state));
+
+        if (window.SD_SCENE) SD_SCENE.setMode(state.selectedMenu);
+
+        // ★ ロック状態をUIに反映
+        updateActionLockUI(state);
+
+        lockActionsIfRetired(state);
+
+        save(state);
       });
     });
   }
@@ -687,9 +690,6 @@
     let state = load();
     if (!state) state = defaultState();
 
-    // 互換：古いセーブに turnActionUsed がない場合
-    if (typeof state.turnActionUsed !== "boolean") state.turnActionUsed = false;
-
     // 初期UI
     const t = state.turn;
     SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
@@ -712,7 +712,7 @@
 
     // actions
     wireActions(state);
-    refreshActionButtons(state);
+    updateActionLockUI(state);
     lockActionsIfRetired(state);
 
     save(state);
