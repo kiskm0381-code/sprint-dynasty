@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Sprint Dynasty MVP</title>
+<style>
+    body { background:#222; margin:0; overflow:hidden; }
+    canvas { background:#2e8b57; display:block; margin:0 auto; }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas" width="1000" height="400"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+let runner = {
+    x: 50,
+    y: 300,
+    speed: 2
+};
+
+function drawTrack() {
+    ctx.fillStyle = "#2e8b57";
+    ctx.fillRect(0,0,1000,400);
+
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(50, 350);
+    ctx.lineTo(950, 350);
+    ctx.stroke();
+}
+
+function drawRunner() {
+    ctx.fillStyle = "yellow";
+    ctx.fillRect(runner.x, runner.y, 20, 50);
+}
+
+function update() {
+    runner.x += runner.speed;
+
+    if (runner.x > 930) {
+        runner.speed = 0;
+    }
+}
+
+function gameLoop() {
+    ctx.clearRect(0,0,1000,400);
+    drawTrack();
+    drawRunner();
+    update();
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+</script>
+
+</body>
+</html>
