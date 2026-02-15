@@ -1,9 +1,7 @@
-// ui.js (改良5)
-// 画面切替 + 練習UI + モーダル + ENDオーバーレイ
-// 追加：
-// - hero_portrait をHOME枠いっぱいに比率維持で表示（pixelated）
-// - 練習演出をフルスクリーン表示
-// - 休息時に「キャラ紹介」風のフルスクリーン演出
+// ui.js (改良7)
+// - 練習/休息/勧誘をフルスクリーン演出として統一（HTML改修不要：DOM生成）
+// - 勧誘タブのハイライト対応
+// - HERO画像は枠いっぱい＆比率維持（歪み防止）
 
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -25,7 +23,7 @@
   }
 
   // ----------------------------
-  // Ensure overlay panels exist (DOMを動的生成してHTML改修を不要にする)
+  // Panels (DOM生成)
   // ----------------------------
   function ensureRunScenePanel() {
     let panel = $("runScenePanel");
@@ -43,12 +41,12 @@
 
     panel.innerHTML = `
       <div style="position:absolute; inset:0; display:flex; flex-direction:column;">
-        <div style="padding:14px 16px; font-weight:700;">
+        <div style="padding:14px 16px; font-weight:800;">
           <div id="sceneCaption" style="font-size:16px; opacity:0.95;"></div>
           <div id="runSceneText" style="margin-top:6px; font-size:13px; opacity:0.80;"></div>
         </div>
         <div style="flex:1; position:relative;">
-          <canvas id="sceneCanvas" width="900" height="520"
+          <canvas id="sceneCanvas"
             style="position:absolute; inset:0; width:100%; height:100%; image-rendering: pixelated;"></canvas>
         </div>
       </div>
@@ -74,11 +72,11 @@
 
     panel.innerHTML = `
       <div style="position:absolute; inset:0; display:flex; align-items:flex-start; gap:16px; padding:18px;">
-        <div style="width:96px; height:96px; background:#666; border:2px solid rgba(255,255,255,0.25); display:flex; align-items:center; justify-content:center;">
+        <div style="width:110px; height:110px; background:#666; border:2px solid rgba(255,255,255,0.25); display:flex; align-items:center; justify-content:center;">
           <img id="restCharImg" alt="char" style="max-width:100%; max-height:100%; image-rendering:pixelated;">
         </div>
         <div style="flex:1;">
-          <div id="restTitle" style="font-weight:800; font-size:16px; margin-bottom:10px;"></div>
+          <div id="restTitle" style="font-weight:900; font-size:16px; margin-bottom:10px;"></div>
           <div id="restBody" style="white-space:pre-wrap; font-size:13px; line-height:1.55; opacity:0.92;"></div>
           <div style="margin-top:14px; font-size:12px; opacity:0.70;">（休息中…）</div>
         </div>
@@ -88,10 +86,45 @@
     return panel;
   }
 
+  function ensureRecruitPanel() {
+    let panel = $("recruitPanel");
+    if (panel) return panel;
+
+    panel = document.createElement("div");
+    panel.id = "recruitPanel";
+    panel.hidden = true;
+    panel.style.display = "none";
+    panel.style.position = "fixed";
+    panel.style.inset = "0";
+    panel.style.zIndex = "99999";
+    panel.style.background = "rgba(245,248,255,1)";
+    panel.style.color = "#111";
+    panel.style.overflow = "auto";
+
+    panel.innerHTML = `
+      <div style="padding:14px 16px; position:sticky; top:0; background:rgba(245,248,255,0.96); backdrop-filter: blur(6px); border-bottom:1px solid rgba(0,0,0,0.08);">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div style="font-weight:900; font-size:16px;">勧誘</div>
+          <button id="recruitCloseBtn" style="padding:8px 10px; border-radius:10px; border:1px solid rgba(0,0,0,0.15); background:#fff; font-weight:800;">閉じる</button>
+        </div>
+        <div id="recruitHint" style="margin-top:8px; font-size:12px; opacity:0.75;"></div>
+      </div>
+      <div style="padding:14px 16px;">
+        <div id="recruitList" style="display:flex; flex-direction:column; gap:10px;"></div>
+      </div>
+    `;
+    document.body.appendChild(panel);
+
+    const closeBtn = $("recruitCloseBtn");
+    if (closeBtn) closeBtn.addEventListener("click", () => forceHide(panel));
+
+    return panel;
+  }
+
+  // canvas内部解像度（DPR対応）
   function resizeSceneCanvas() {
     const canvas = $("sceneCanvas");
     if (!canvas) return;
-    // CSSで100%にしているので、描画解像度だけ整える（端末のDPR対応）
     const rect = canvas.getBoundingClientRect();
     const dpr = Math.max(1, window.devicePixelRatio || 1);
     const w = Math.max(1, Math.round(rect.width * dpr));
@@ -120,7 +153,8 @@
       const active =
         (name === "home" && key === "home") ||
         (name === "practice" && key === "practice") ||
-        (name === "settings" && key === "settings");
+        (name === "settings" && key === "settings") ||
+        (name === "recruit" && key === "recruit");
       t.classList.toggle("is-active", !!active);
     });
   }
@@ -137,7 +171,6 @@
       }
     }, 0);
   }
-
   function closeNameModal() {
     const back = $("nameModalBackdrop");
     const input = $("nameInput");
@@ -146,24 +179,18 @@
   }
 
   // ---- end overlay ----
-  function showEndOverlay() {
-    forceShow($("endOverlay"), "flex");
-  }
-  function hideEndOverlay() {
-    forceHide($("endOverlay"));
-  }
+  function showEndOverlay() { forceShow($("endOverlay"), "flex"); }
+  function hideEndOverlay() { forceHide($("endOverlay")); }
 
   // ---- text updates ----
   function setPlayerName(name) {
     const el = $("playerNameText");
     if (el) el.textContent = name || "（未設定）";
   }
-
   function setHeroMeta(text) {
     const el = $("heroMetaText");
     if (el) el.textContent = text || "";
   }
-
   function setTurnText(turn) {
     const el = $("turnBadge");
     if (!el || !turn) return;
@@ -171,50 +198,40 @@
       turn.termLabel || (turn.term === 1 ? "上旬" : turn.term === 2 ? "中旬" : "下旬");
     el.textContent = `${turn.grade}年 ${turn.month}月 ${termLabel}`;
   }
-
   function setNextMeet(text) {
     const el = $("nextMeetText");
     if (el) el.textContent = text || "";
   }
-
   function setCoachLine(text) {
     const el = $("coachLine");
     if (el) el.textContent = text || "";
   }
-
   function setAtmosphereText(text) {
     const el = $("atmosphereText");
     if (el) el.textContent = text || "";
   }
-
   function setSceneCaption(text) {
-    // runScenePanelを動的生成する場合に備え、idを必ず使う
     const el = $("sceneCaption");
     if (el) el.textContent = text || "";
   }
-
   function setRunSceneText(text) {
     const el = $("runSceneText");
     if (el) el.textContent = text || "";
   }
 
-  // ---- HERO PORTRAIT（HOME左の枠）----
+  // ---- HERO PORTRAIT（HOME枠）----
   function setHeroPortrait(src) {
-    // 可能性1: idで用意されている
+    // 既存HTMLにidが無いはずなので、左カードの最初のimgを取る
     let img = $("heroPortrait");
-
-    // 可能性2: HEROカード内のimg（既存DOMを壊さず拾う）
-    if (!img) {
-      img = document.querySelector(".hero-card img") || document.querySelector("#viewHome img");
-    }
+    if (!img) img = document.querySelector(".hero-card img") || document.querySelector("#viewHome img");
     if (!img) return;
 
     if (src) img.src = src;
 
-    // 枠いっぱい＆比率維持＆ドット感
+    // 枠いっぱい、歪み防止
     img.style.width = "100%";
     img.style.height = "100%";
-    img.style.objectFit = "contain"; // 縦長歪み防止
+    img.style.objectFit = "contain"; // 比率維持（縦長化防止）
     img.style.imageRendering = "pixelated";
     img.style.display = "block";
     img.style.background = "transparent";
@@ -259,32 +276,50 @@
     if (inj) inj.textContent = `${player.injuryCount ?? 0} / 3`;
   }
 
+  // ---- team (8枠固定) ----
   function renderTeam(team) {
     const list = $("teamList");
     if (!list) return;
 
-    const arr = Array.isArray(team) ? team : [];
-    list.innerHTML = arr
-      .map((m, idx) => {
-        const name = m.name || `部員${idx + 1}`;
+    const arr = Array.isArray(team) ? team suggested : [];
+    const members = Array.isArray(team) ? team : [];
+    const slots = 8;
+
+    const items = [];
+    for (let i = 0; i < slots; i++) {
+      const m = members[i];
+      if (m) {
+        const name = m.name || `部員${i + 1}`;
         const grade = m.grade ? `${m.grade}年` : "";
         const rarity = m.rarity === "rare" ? "レア" : "通常";
         const tag = m.tag || "";
         const pow = Number.isFinite(m.pow) ? m.pow : 0;
-        return `
+        items.push(`
           <div class="member">
-            <div class="avatar">${idx + 1}</div>
+            <div class="avatar">${i + 1}</div>
             <div class="meta">
               <div class="name">${name}</div>
               <div class="sub">${grade} / ${rarity}${tag ? " / " + tag : ""}</div>
             </div>
             <div class="pow">${pow}</div>
           </div>
-        `;
-      })
-      .join("");
+        `);
+      } else {
+        items.push(`
+          <div class="member" style="opacity:0.65;">
+            <div class="avatar">${i + 1}</div>
+            <div class="meta">
+              <div class="name">空き</div>
+              <div class="sub">勧誘でメンバーを増やせます</div>
+            </div>
+            <div class="pow">—</div>
+          </div>
+        `);
+      }
+    }
+    list.innerHTML = items.join("");
 
-    const total = arr.reduce((acc, m) => acc + (Number.isFinite(m.pow) ? m.pow : 0), 0);
+    const total = members.reduce((acc, m) => acc + (Number.isFinite(m?.pow) ? m.pow : 0), 0);
     const tp = $("teamPowerText");
     if (tp) tp.textContent = `${total}`;
   }
@@ -327,14 +362,14 @@
     checks.forEach((c) => (c.checked = false));
   }
 
-  // ---- run scene panel (FULLSCREEN) ----
+  // ---- run scene (FULLSCREEN) ----
   function showRunScene() {
     const panel = ensureRunScenePanel();
     forceShow(panel, "block");
     resizeSceneCanvas();
-    // 画面回転・リサイズ対応
     window.addEventListener("resize", resizeSceneCanvas, { passive: true });
   }
+
   function hideRunScene() {
     const panel = ensureRunScenePanel();
     forceHide(panel);
@@ -353,12 +388,28 @@
     if (img) img.style.imageRendering = "pixelated";
     forceShow(panel, "block");
   }
+
   function hideRestScene() {
     const panel = ensureRestScenePanel();
     forceHide(panel);
   }
 
-  // backdrop click closes modal (safety)
+  // ---- recruit panel (FULLSCREEN) ----
+  function showRecruitPanel({ hint, listHTML }) {
+    const panel = ensureRecruitPanel();
+    const h = $("recruitHint");
+    const list = $("recruitList");
+    if (h) h.textContent = hint || "";
+    if (list) list.innerHTML = listHTML || "";
+    forceShow(panel, "block");
+  }
+
+  function hideRecruitPanel() {
+    const panel = ensureRecruitPanel();
+    forceHide(panel);
+  }
+
+  // backdrop click closes modal
   document.addEventListener("click", (e) => {
     const back = $("nameModalBackdrop");
     if (!back) return;
@@ -366,21 +417,16 @@
   });
 
   window.SD_UI = {
-    // view
     setActiveView,
 
-    // modal
     openNameModal,
     closeNameModal,
 
-    // end overlay
     showEndOverlay,
     hideEndOverlay,
 
-    // hero
     setHeroPortrait,
 
-    // text
     setPlayerName,
     setHeroMeta,
     setTurnText,
@@ -390,21 +436,20 @@
     setSceneCaption,
     setRunSceneText,
 
-    // render
     renderStats,
     renderTeam,
 
-    // practice
     renderPracticeLists,
     getSelectedPracticeIds,
     clearPracticeChecks,
 
-    // run scene
     showRunScene,
     hideRunScene,
 
-    // rest scene
     showRestScene,
     hideRestScene,
+
+    showRecruitPanel,
+    hideRecruitPanel,
   };
 })();
