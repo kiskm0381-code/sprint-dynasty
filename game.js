@@ -1,22 +1,13 @@
-// game.js (改良7)
-// - 練習演出が出ない不具合修正：showRunScene()後にcanvas生成→init→start
-// - hero_idle.png の白背景を簡易クロマキーで透明化（練習演出）
-// - 休息演出 7秒固定
-// - チーム仕様変更：初期4人、枠8、勧誘で増える
-// - 勧誘：15人プール→毎ターン4人提示→その中から1人だけ勧誘→成否に関わらずターン終了
-// - 勧誘成功率：学校prestige × 主人公totalPower
-// - “レアだが必ず成功” を1名
+// game.js (改良7 修正版)
+// - resetBtn のイベント名修正（"click"）
+// それ以外は改良7のまま
 
 (function () {
   const KEY = "sd_save_v1";
 
-  // ----------------------------
-  // Assets
-  // ----------------------------
-  const HERO_PORTRAIT_SRC = "./assets/hero_portrait.png"; // HOME枠（主人公顔）
-  const HERO_RUN_SPRITE_SRC = "./assets/hero_idle.png";   // 走る演出（練習・大会）
+  const HERO_PORTRAIT_SRC = "./assets/hero_portrait.png";
+  const HERO_RUN_SPRITE_SRC = "./assets/hero_idle.png";
 
-  // 通常キャラ：使い回し（あなたが assets に置いたら生きる）
   const NORMAL_PORTRAITS = [
     "./assets/portraits/normal_01.png",
     "./assets/portraits/normal_02.png",
@@ -30,14 +21,10 @@
     "./assets/runners/normal_run_04.png",
   ];
 
-  // hero_idle.png のスプライト想定
   const SPRITE_COLS = 8;
   const SPRITE_ROWS = 4;
-  const RUN_ROW_INDEX = 0; // 0行目を走りとして扱う
+  const RUN_ROW_INDEX = 0;
 
-  // ----------------------------
-  // Save / Load
-  // ----------------------------
   function save(state) { localStorage.setItem(KEY, JSON.stringify(state)); }
   function load() {
     const raw = localStorage.getItem(KEY);
@@ -46,14 +33,10 @@
   }
   function hardReset() { localStorage.removeItem(KEY); location.reload(); }
 
-  // ----------------------------
-  // Default State
-  // ----------------------------
   function defaultState() {
     const rarity = "normal";
     const stats = SD_DATA.genStatsByGrade(1, rarity);
 
-    // 初期8→4
     let team = SD_DATA.makeTeamMembers();
     if (!Array.isArray(team)) team = [];
     team = team.slice(0, 4);
@@ -70,41 +53,19 @@
         retired: false
       },
       team,
-      turn: {
-        grade: 1,
-        month: 4,
-        term: 1, // 1=上旬,2=中旬,3=下旬
-      },
-      school: {
-        prestige: 18, // 学校成績(0..100)。大会/イベントで将来伸びる想定
-      },
-      nextMeet: {
-        name: "新人戦 地区大会",
-        turnsLeft: 3,
-      },
-      flags: {
-        campSummer: false,
-        campWinter: false,
-        allJapanCamp: false,
-      },
-      // 勧誘
-      recruit: {
-        usedThisTurn: false,
-        lastOfferedIds: [], // そのターンに提示した4人
-      },
+      turn: { grade: 1, month: 4, term: 1 },
+      school: { prestige: 18 },
+      nextMeet: { name: "新人戦 地区大会", turnsLeft: 3 },
+      flags: { campSummer: false, campWinter: false, allJapanCamp: false },
+      recruit: { usedThisTurn: false, lastOfferedIds: [] },
       lastEvent: ""
     };
   }
 
-  // ----------------------------
-  // Helpers
-  // ----------------------------
   function termLabel(term) {
     return term === 1 ? "上旬" : term === 2 ? "中旬" : "下旬";
   }
-  function clampStat(v) {
-    return SD_DATA.clamp(Math.round(v), 0, 100);
-  }
+  function clampStat(v) { return SD_DATA.clamp(Math.round(v), 0, 100); }
 
   function recalcTeamPowers(state) {
     for (const m of state.team) {
@@ -114,26 +75,20 @@
   }
 
   function totalPowerFromStats(stats) {
-    // SD_DATA.totalPower があればそれを使う。なければ簡易。
     if (SD_DATA && typeof SD_DATA.totalPower === "function") return SD_DATA.totalPower(stats || {});
     const s = stats || {};
     return (s.SPD||0)+(s.ACC||0)+(s.POW||0)+(s.TEC||0)+(s.STA||0)+(s.MEN||0);
   }
 
-  // ----------------------------
-  // Flavor
-  // ----------------------------
   function coachLineForTurn(state) {
     const meet = state.nextMeet;
 
     if (state.player.retired) {
       return "よく頑張った。結果だけが全てじゃない。君の走りは、君のものだ。";
     }
-
     if (state.lastEvent && state.lastEvent.includes("怪我")) {
       return "今は治すことが最優先だよ。焦りは、痛みより長引くからね。";
     }
-
     if (meet.turnsLeft <= 3 && meet.turnsLeft >= 1) {
       return `あと${meet.turnsLeft}ターンで${meet.name}だ。今は“積み上げ”の時期だよ。`;
     }
@@ -145,10 +100,7 @@
     const s = state.player.stats;
     const pairs = Object.entries(s).sort((a,b)=>a[1]-b[1]);
     const weakest = pairs[0]?.[0];
-    const hint = {
-      SPD:"スピード", ACC:"加速", POW:"パワー", TEC:"技術", STA:"持久力", MEN:"メンタル"
-    }[weakest] || "基礎";
-
+    const hint = { SPD:"スピード", ACC:"加速", POW:"パワー", TEC:"技術", STA:"持久力", MEN:"メンタル" }[weakest] || "基礎";
     return `${hint}を少し意識してみようか。丁寧にいこう。`;
   }
 
@@ -166,9 +118,6 @@
     return `${m.name}（あと${m.turnsLeft}ターン）`;
   }
 
-  // ----------------------------
-  // Training core (逓減 + 疲労 + 怪我)
-  // ----------------------------
   function trainingEfficiencyByFatigue(fatigue) {
     const eff = 1.0 - (fatigue * 0.0065);
     return SD_DATA.clamp(eff, 0.35, 1.00);
@@ -180,13 +129,8 @@
   }
 
   const MENU_INTENSITY = {
-    start: 1.15,
-    tempo: 1.00,
-    power: 1.25,
-    core: 1.05,
-    mental: 0.85,
-    massage: 0.20,
-    rest: 0.10,
+    start: 1.15, tempo: 1.00, power: 1.25, core: 1.05,
+    mental: 0.85, massage: 0.20, rest: 0.10,
   };
 
   function injuryRoll(state, action) {
@@ -199,7 +143,6 @@
     const base = ((f - 65) / 35);
     const curve = Math.pow(SD_DATA.clamp(base, 0, 1), 1.35);
     let prob = curve * 0.18;
-
     prob *= (MENU_INTENSITY[action] || 1.0);
 
     const growth = p.growthTraits?.growth ?? 100;
@@ -274,9 +217,6 @@
     if (!p.retired && p.fatigue >= 100) applyInjury(state);
   }
 
-  // ----------------------------
-  // Turn advance
-  // ----------------------------
   function advanceTurn(state) {
     if (state.player.retired) return;
 
@@ -295,16 +235,11 @@
       }
     }
 
-    // ターンごとのフラグ
     state.recruit.usedThisTurn = false;
     state.recruit.lastOfferedIds = [];
-
     state.lastEvent = "";
   }
 
-  // ----------------------------
-  // Name Modal
-  // ----------------------------
   function showNameModalIfNeeded(state) {
     if (!state.player.name || !state.player.name.trim()) {
       SD_UI.openNameModal();
@@ -352,9 +287,6 @@
     }
   }
 
-  // ----------------------------
-  // Practice definitions
-  // ----------------------------
   const PRACTICE_TEAM = [
     { id:"tempo",  name:"リレー連携", desc:"技術と集中。気持ちも上がる。", tags:["能力UP"] },
     { id:"start",  name:"スタート練習（反復）", desc:"加速の型を身体に入れる。", tags:["能力UP","疲労"] },
@@ -369,9 +301,6 @@
     { id:"power",  name:"短距離ダッシュ（反復）", desc:"刺激は強い。疲労は中〜高。", tags:["能力UP","疲労"] },
   ];
 
-  // ----------------------------
-  // Scene (Canvas) : 練習中だけ生成・初期化
-  // ----------------------------
   let SCENE = null;
 
   function initSceneIfNeeded() {
@@ -387,7 +316,6 @@
     return SCENE;
   }
 
-  // --- sprite load + chroma key (white -> transparent) ---
   function loadImage(src) {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -397,7 +325,6 @@
     });
   }
 
-  // hero_idle.png が白背景でも「白だけ抜く」
   async function makeChromaKeyedSprite(img) {
     const off = document.createElement("canvas");
     off.width = img.naturalWidth || img.width;
@@ -408,17 +335,12 @@
     const im = octx.getImageData(0, 0, off.width, off.height);
     const d = im.data;
 
-    // かなり白いピクセルを透明化（緩め）
     for (let i = 0; i < d.length; i += 4) {
       const r = d[i], g = d[i+1], b = d[i+2], a = d[i+3];
       if (a === 0) continue;
-      if (r >= 245 && g >= 245 && b >= 245) {
-        d[i+3] = 0;
-      }
+      if (r >= 245 && g >= 245 && b >= 245) d[i+3] = 0;
     }
     octx.putImageData(im, 0, 0);
-
-    // offscreen canvas を「画像扱い」で返す
     return off;
   }
 
@@ -442,14 +364,12 @@
 
     function drawBackground() {
       const w = canvas.width, h = canvas.height;
-
       const g = ctx.createLinearGradient(0, 0, 0, h);
       g.addColorStop(0, "rgba(235,240,255,1)");
       g.addColorStop(1, "rgba(210,220,245,1)");
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, w, h);
 
-      // コース
       ctx.fillStyle = "rgba(220,60,60,0.20)";
       ctx.fillRect(0, h * 0.62, w, h * 0.38);
 
@@ -471,11 +391,10 @@
       const sw = sprite.width / SPRITE_COLS;
       const sh = sprite.height / SPRITE_ROWS;
 
-      const frame = Math.floor((t * 0.30) % SPRITE_COLS); // 0..7
+      const frame = Math.floor((t * 0.30) % SPRITE_COLS);
       const sx = frame * sw;
       const sy = RUN_ROW_INDEX * sh;
 
-      // 描画サイズ（スマホでも見える）
       const scale = Math.max(2, Math.round(canvas.width / 420));
       const dw = sw * scale;
       const dh = sh * scale;
@@ -505,9 +424,6 @@
     return { start };
   }
 
-  // ----------------------------
-  // UI refresh
-  // ----------------------------
   function refreshAll(state) {
     const t = state.turn;
     SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
@@ -517,7 +433,6 @@
     SD_UI.setCoachLine(coachLineForTurn(state));
     SD_UI.setAtmosphereText(atmosphereText(state));
 
-    // 主人公アイコン
     SD_UI.setHeroPortrait(HERO_PORTRAIT_SRC);
 
     recalcTeamPowers(state);
@@ -530,20 +445,14 @@
     else SD_UI.hideEndOverlay();
   }
 
-  // ----------------------------
-  // Flow: practice
-  // ----------------------------
   async function runPracticeTurn(state, selectedIds) {
     if (state.player.retired) return;
 
-    // フルスクリーン演出
     SD_UI.showRunScene();
     SD_UI.setSceneCaption("練習。息が熱い。");
     SD_UI.setRunSceneText("走る…（準備中）");
 
-    // ★重要：表示後に初期化（これで必ずcanvasが存在する）
     initSceneIfNeeded();
-
     await new Promise(r => setTimeout(r, 1200));
 
     const ids = Array.isArray(selectedIds) ? selectedIds : [];
@@ -563,12 +472,7 @@
     refreshAll(state);
   }
 
-  // ----------------------------
-  // Rest (7秒固定 + レア紹介)
-  // ----------------------------
   function pickRestRare(state) {
-    // 休息演出の「レア紹介」：低確率で出す（飽き対策）
-    // ただし今は画像が揃ってない前提で、主人公ポートレートを流用しても成立するようにする
     const roll = Math.random();
     if (roll < 0.22) {
       return {
@@ -590,25 +494,20 @@
   async function applyRestTurn(state) {
     if (state.player.retired) return;
 
-    // 休息を適用→ターン進行（結果は背面で進める）
     applyTrainingOnce(state, "rest", 1);
     if (!state.player.retired) advanceTurn(state);
 
-    // 休息フルスクリーン（7秒固定）
     const rare = pickRestRare(state);
     SD_UI.showRestScene({ title: rare.title, body: rare.body, imgSrc: rare.img });
-    await new Promise(r => setTimeout(r, 7000));
+
+    await new Promise(r => setTimeout(r, 7000)); // ★固定7秒
     SD_UI.hideRestScene();
 
     SD_UI.setActiveView("home");
     refreshAll(state);
   }
 
-  // ----------------------------
-  // Recruit: candidates pool (15)
-  // ----------------------------
   const RECRUIT_POOL = [
-    // rare=false は通常。portrait/runner は使い回しが基本
     { id:"n01", name:"西園 シン",  grade:1, type:"SPD", rarity:"normal", mustJoin:false, vibe:"短い加速で勝負する。", portraitIdx:0, runnerIdx:0 },
     { id:"n02", name:"土岐 ユウ",  grade:1, type:"TEC", rarity:"normal", mustJoin:false, vibe:"フォームが綺麗で伸びしろ大。", portraitIdx:1, runnerIdx:1 },
     { id:"n03", name:"羽柴 ケン",  grade:2, type:"POW", rarity:"normal", mustJoin:false, vibe:"直線が強い。筋力タイプ。", portraitIdx:2, runnerIdx:2 },
@@ -622,11 +521,9 @@
     { id:"n11", name:"神谷 ヒビキ",grade:3, type:"MEN", rarity:"normal", mustJoin:false, vibe:"勝負所で顔色が変わらない。", portraitIdx:2, runnerIdx:0 },
     { id:"n12", name:"水無月 シュン",grade:2,type:"STA", rarity:"normal", mustJoin:false, vibe:"淡々と積む。夏に強い。", portraitIdx:3, runnerIdx:1 },
 
-    // rare（少なめ）
     { id:"r01", name:"黒瀬 アキト", grade:2, type:"SPD", rarity:"rare", mustJoin:false, vibe:"“100mだけ”なら全国級。", portraitSrc:"./assets/portraits/rare_r01.png", runnerSrc:"./assets/runners/rare_r01_run.png" },
     { id:"r02", name:"天城 ナギ",     grade:1, type:"TEC", rarity:"rare", mustJoin:false, vibe:"フォームが芸術。撮られる男。", portraitSrc:"./assets/portraits/rare_r02.png", runnerSrc:"./assets/runners/rare_r02_run.png" },
 
-    // “レアだが必ず成功”
     { id:"rg1", name:"白峰 レオ",     grade:3, type:"ACC", rarity:"rare", mustJoin:true, vibe:"ある条件で必ず味方になる。", portraitSrc:"./assets/portraits/rare_rg.png", runnerSrc:"./assets/runners/rare_rg_run.png" },
   ];
 
@@ -636,7 +533,6 @@
 
   function sampleRecruit4(state) {
     const pool = RECRUIT_POOL.filter(c => !alreadyInTeam(state, c.id));
-    // シャッフル
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [pool[i], pool[j]] = [pool[j], pool[i]];
@@ -650,51 +546,36 @@
     const prestige = SD_DATA.clamp(state.school?.prestige ?? 0, 0, 100) / 100;
     const pPow = SD_DATA.clamp(totalPowerFromStats(state.player.stats), 0, 600) / 600;
 
-    // 土台：学校×個人（バランス）
-    let base = 0.15 + (prestige * 0.45) + (pPow * 0.40); // 0.15..1.0程度
-
-    // レア補正（少し渋く）
+    let base = 0.15 + (prestige * 0.45) + (pPow * 0.40);
     if (cand.rarity === "rare") base -= 0.12;
-
-    // 下限/上限
     base = SD_DATA.clamp(base, 0.05, 0.90);
     return base;
   }
 
   function makeMemberFromCandidate(c) {
-    // SD_DATAのメンバー構造に寄せる（最低限の互換）
     const rarity = c.rarity === "rare" ? "rare" : "normal";
     const stats = SD_DATA.genStatsByGrade(c.grade || 1, rarity);
 
-    const m = {
+    return {
       id: c.id,
       name: c.name,
       grade: c.grade || 1,
       rarity,
       stats,
-      // 表示用
-      portrait:
-        c.portraitSrc ||
-        NORMAL_PORTRAITS[(c.portraitIdx ?? 0) % NORMAL_PORTRAITS.length],
-      runner:
-        c.runnerSrc ||
-        NORMAL_RUNNERS[(c.runnerIdx ?? 0) % NORMAL_RUNNERS.length],
+      portrait: c.portraitSrc || NORMAL_PORTRAITS[(c.portraitIdx ?? 0) % NORMAL_PORTRAITS.length],
+      runner: c.runnerSrc || NORMAL_RUNNERS[(c.runnerIdx ?? 0) % NORMAL_RUNNERS.length],
       vibe: c.vibe || "",
     };
-    return m;
   }
 
   function renderRecruitCards(state, offered) {
-    const hint =
-      `学校成績 ${state.school.prestige}/100　/　勧誘は1ターン1人（成功・失敗でもターン終了）`;
+    const hint = `学校成績 ${state.school.prestige}/100　/　勧誘は1ターン1人（成功・失敗でもターン終了）`;
 
     const cards = offered.map((c) => {
       const p = Math.round(recruitSuccessProb(state, c) * 100);
       const rarityLabel = c.rarity === "rare" ? "レア" : "通常";
       const must = c.mustJoin ? "（確定成功）" : "";
-      const img =
-        c.portraitSrc ||
-        NORMAL_PORTRAITS[(c.portraitIdx ?? 0) % NORMAL_PORTRAITS.length];
+      const img = c.portraitSrc || NORMAL_PORTRAITS[(c.portraitIdx ?? 0) % NORMAL_PORTRAITS.length];
 
       return `
         <div style="background:#fff; border:1px solid rgba(0,0,0,0.10); border-radius:14px; padding:12px; display:flex; gap:12px; align-items:flex-start;">
@@ -735,18 +616,13 @@
     if (success) {
       if (state.team.length < 8) state.team.push(makeMemberFromCandidate(cand));
       state.lastEvent = `勧誘成功：${cand.name}が入部した。`;
-      // 学校成績も少し上がる（勧誘が続く好循環）
       state.school.prestige = SD_DATA.clamp((state.school.prestige ?? 0) + (cand.rarity === "rare" ? 2 : 1), 0, 100);
     } else {
       state.lastEvent = `勧誘失敗：${cand.name}には届かなかった。`;
-      // 失敗でも少しだけ学び（微増）
-      state.school.prestige = SD_DATA.clamp((state.school.prestige ?? 0) + 0, 0, 100);
     }
 
-    // 成否に関わらずターン終了
     advanceTurn(state);
 
-    // 結果は短い暗転で見せる（休息ほど長くない）
     SD_UI.hideRecruitPanel();
     SD_UI.showRestScene({
       title: "勧誘",
@@ -764,7 +640,6 @@
     if (state.player.retired) return;
     if (showNameModalIfNeeded(state)) return;
 
-    // 今ターンの4人を確定
     const offered = sampleRecruit4(state);
     state.recruit.lastOfferedIds = offered.map(o => o.id);
     save(state);
@@ -772,7 +647,6 @@
     SD_UI.setActiveView("recruit");
     renderRecruitCards(state, offered);
 
-    // ボタンにイベント
     setTimeout(() => {
       const btns = document.querySelectorAll("[data-recruit-pick]");
       btns.forEach((b) => {
@@ -785,9 +659,6 @@
     }, 0);
   }
 
-  // ----------------------------
-  // Wiring
-  // ----------------------------
   function wireTabs(state) {
     const tabs = document.querySelectorAll(".tabbar .tab");
     tabs.forEach((btn) => {
@@ -795,28 +666,11 @@
         const key = btn.getAttribute("data-tab");
         if (!key) return;
 
-        if (key === "home") {
-          SD_UI.setActiveView("home");
-          return;
-        }
-        if (key === "practice") {
-          if (state.player.retired) return;
-          SD_UI.setActiveView("practice");
-          return;
-        }
-        if (key === "settings") {
-          SD_UI.setActiveView("settings");
-          return;
-        }
-        if (key === "rest") {
-          if (state.player.retired) return;
-          await applyRestTurn(state);
-          return;
-        }
-        if (key === "recruit") {
-          openRecruit(state);
-          return;
-        }
+        if (key === "home") { SD_UI.setActiveView("home"); return; }
+        if (key === "practice") { if (state.player.retired) return; SD_UI.setActiveView("practice"); return; }
+        if (key === "settings") { SD_UI.setActiveView("settings"); return; }
+        if (key === "rest") { if (state.player.retired) return; await applyRestTurn(state); return; }
+        if (key === "recruit") { openRecruit(state); return; }
       });
     });
   }
@@ -825,11 +679,7 @@
     const startBtn = document.getElementById("practiceStartBtn");
     const clearBtn = document.getElementById("practiceClearBtn");
 
-    if (clearBtn) {
-      clearBtn.addEventListener("click", () => {
-        SD_UI.clearPracticeChecks();
-      });
-    }
+    if (clearBtn) clearBtn.addEventListener("click", () => SD_UI.clearPracticeChecks());
 
     if (startBtn) {
       startBtn.addEventListener("click", async () => {
@@ -837,10 +687,7 @@
         if (showNameModalIfNeeded(state)) return;
 
         const ids = SD_UI.getSelectedPracticeIds();
-        if (ids.length === 0) {
-          SD_UI.setCoachLine("今日は何をやる？ 1つでもいい。選んでみよう。");
-          return;
-        }
+        if (ids.length === 0) { SD_UI.setCoachLine("今日は何をやる？ 1つでもいい。選んでみよう。"); return; }
 
         await runPracticeTurn(state, ids);
         SD_UI.clearPracticeChecks();
@@ -852,11 +699,10 @@
     const openNameBtn = document.getElementById("openNameBtn");
     const resetBtn = document.getElementById("resetBtn");
 
-    if (openNameBtn) {
-      openNameBtn.addEventListener("click", () => SD_UI.openNameModal());
-    }
+    if (openNameBtn) openNameBtn.addEventListener("click", () => SD_UI.openNameModal());
+
     if (resetBtn) {
-      resetBtn.addEventListener("二", () => {
+      resetBtn.addEventListener("click", () => { // ★修正：click
         if (confirm("最初からやり直しますか？（ローカルデータを削除）")) hardReset();
       });
     }
@@ -868,9 +714,6 @@
     end.addEventListener("click", () => hardReset());
   }
 
-  // ----------------------------
-  // Boot
-  // ----------------------------
   function boot() {
     let state = load();
     if (!state) state = defaultState();
