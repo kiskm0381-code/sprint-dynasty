@@ -1,6 +1,9 @@
 // ui.js (改良5)
 // 画面切替 + 練習UI + モーダル + ENDオーバーレイ
-// + ホームの主人公枠(img)に hero_portrait.png を差し込む機能追加
+// 追加：
+// - hero_portrait をHOME枠いっぱいに比率維持で表示（pixelated）
+// - 練習演出をフルスクリーン表示
+// - 休息時に「キャラ紹介」風のフルスクリーン演出
 
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -21,6 +24,84 @@
     el.setAttribute("aria-hidden", "true");
   }
 
+  // ----------------------------
+  // Ensure overlay panels exist (DOMを動的生成してHTML改修を不要にする)
+  // ----------------------------
+  function ensureRunScenePanel() {
+    let panel = $("runScenePanel");
+    if (panel) return panel;
+
+    panel = document.createElement("div");
+    panel.id = "runScenePanel";
+    panel.hidden = true;
+    panel.style.display = "none";
+    panel.style.position = "fixed";
+    panel.style.inset = "0";
+    panel.style.zIndex = "99999";
+    panel.style.background = "rgba(235,240,255,1)";
+    panel.style.overflow = "hidden";
+
+    panel.innerHTML = `
+      <div style="position:absolute; inset:0; display:flex; flex-direction:column;">
+        <div style="padding:14px 16px; font-weight:700;">
+          <div id="sceneCaption" style="font-size:16px; opacity:0.95;"></div>
+          <div id="runSceneText" style="margin-top:6px; font-size:13px; opacity:0.80;"></div>
+        </div>
+        <div style="flex:1; position:relative;">
+          <canvas id="sceneCanvas" width="900" height="520"
+            style="position:absolute; inset:0; width:100%; height:100%; image-rendering: pixelated;"></canvas>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(panel);
+    return panel;
+  }
+
+  function ensureRestScenePanel() {
+    let panel = $("restScenePanel");
+    if (panel) return panel;
+
+    panel = document.createElement("div");
+    panel.id = "restScenePanel";
+    panel.hidden = true;
+    panel.style.display = "none";
+    panel.style.position = "fixed";
+    panel.style.inset = "0";
+    panel.style.zIndex = "99999";
+    panel.style.background = "rgba(0,0,0,0.92)";
+    panel.style.color = "#fff";
+    panel.style.overflow = "hidden";
+
+    panel.innerHTML = `
+      <div style="position:absolute; inset:0; display:flex; align-items:flex-start; gap:16px; padding:18px;">
+        <div style="width:96px; height:96px; background:#666; border:2px solid rgba(255,255,255,0.25); display:flex; align-items:center; justify-content:center;">
+          <img id="restCharImg" alt="char" style="max-width:100%; max-height:100%; image-rendering:pixelated;">
+        </div>
+        <div style="flex:1;">
+          <div id="restTitle" style="font-weight:800; font-size:16px; margin-bottom:10px;"></div>
+          <div id="restBody" style="white-space:pre-wrap; font-size:13px; line-height:1.55; opacity:0.92;"></div>
+          <div style="margin-top:14px; font-size:12px; opacity:0.70;">（休息中…）</div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(panel);
+    return panel;
+  }
+
+  function resizeSceneCanvas() {
+    const canvas = $("sceneCanvas");
+    if (!canvas) return;
+    // CSSで100%にしているので、描画解像度だけ整える（端末のDPR対応）
+    const rect = canvas.getBoundingClientRect();
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const w = Math.max(1, Math.round(rect.width * dpr));
+    const h = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  }
+
   // ---- views ----
   function setActiveView(name) {
     const views = {
@@ -36,35 +117,12 @@
     const tabs = document.querySelectorAll(".tabbar .tab");
     tabs.forEach((t) => {
       const key = t.getAttribute("data-tab");
-      const active = (name === "home" && key === "home")
-        || (name === "practice" && key === "practice")
-        || (name === "settings" && key === "settings");
+      const active =
+        (name === "home" && key === "home") ||
+        (name === "practice" && key === "practice") ||
+        (name === "settings" && key === "settings");
       t.classList.toggle("is-active", !!active);
     });
-  }
-
-  // ---- hero portrait img ----
-  // できるだけ壊れにくい探索で「主人公枠のimg」を拾って src を差し替える
-  function findHeroImgEl() {
-    // 推奨：index.htmlで <img id="heroImage" ...> にしておくと確実
-    return (
-      $("heroImage")
-      || $("heroPortraitImg")
-      || document.querySelector("[data-hero-image]")
-      || document.querySelector(".hero-card img")
-      || document.querySelector("#viewHome img")
-      || document.querySelector("img")
-      || null
-    );
-  }
-
-  function setHeroImageSrc(src) {
-    const img = findHeroImgEl();
-    if (!img) return;
-    if (img.getAttribute("src") !== src) img.setAttribute("src", src);
-
-    // ドット絵が滲む場合の保険（CSS側でも可）
-    img.style.imageRendering = "pixelated";
   }
 
   // ---- modal ----
@@ -109,7 +167,8 @@
   function setTurnText(turn) {
     const el = $("turnBadge");
     if (!el || !turn) return;
-    const termLabel = turn.termLabel || (turn.term === 1 ? "上旬" : turn.term === 2 ? "中旬" : "下旬");
+    const termLabel =
+      turn.termLabel || (turn.term === 1 ? "上旬" : turn.term === 2 ? "中旬" : "下旬");
     el.textContent = `${turn.grade}年 ${turn.month}月 ${termLabel}`;
   }
 
@@ -129,6 +188,7 @@
   }
 
   function setSceneCaption(text) {
+    // runScenePanelを動的生成する場合に備え、idを必ず使う
     const el = $("sceneCaption");
     if (el) el.textContent = text || "";
   }
@@ -136,6 +196,28 @@
   function setRunSceneText(text) {
     const el = $("runSceneText");
     if (el) el.textContent = text || "";
+  }
+
+  // ---- HERO PORTRAIT（HOME左の枠）----
+  function setHeroPortrait(src) {
+    // 可能性1: idで用意されている
+    let img = $("heroPortrait");
+
+    // 可能性2: HEROカード内のimg（既存DOMを壊さず拾う）
+    if (!img) {
+      img = document.querySelector(".hero-card img") || document.querySelector("#viewHome img");
+    }
+    if (!img) return;
+
+    if (src) img.src = src;
+
+    // 枠いっぱい＆比率維持＆ドット感
+    img.style.width = "100%";
+    img.style.height = "100%";
+    img.style.objectFit = "contain"; // 縦長歪み防止
+    img.style.imageRendering = "pixelated";
+    img.style.display = "block";
+    img.style.background = "transparent";
   }
 
   // ---- stats ----
@@ -214,7 +296,7 @@
     if (!teamList || !soloList) return;
 
     function itemHTML(item) {
-      const tags = (item.tags || []).map(t => `<span class="tag">${t}</span>`).join("");
+      const tags = (item.tags || []).map((t) => `<span class="tag">${t}</span>`).join("");
       return `
         <label class="practice-item">
           <input type="checkbox" data-practice-id="${item.id}">
@@ -245,12 +327,35 @@
     checks.forEach((c) => (c.checked = false));
   }
 
-  // ---- run scene panel ----
+  // ---- run scene panel (FULLSCREEN) ----
   function showRunScene() {
-    forceShow($("runScenePanel"), "block");
+    const panel = ensureRunScenePanel();
+    forceShow(panel, "block");
+    resizeSceneCanvas();
+    // 画面回転・リサイズ対応
+    window.addEventListener("resize", resizeSceneCanvas, { passive: true });
   }
   function hideRunScene() {
-    forceHide($("runScenePanel"));
+    const panel = ensureRunScenePanel();
+    forceHide(panel);
+    window.removeEventListener("resize", resizeSceneCanvas);
+  }
+
+  // ---- rest scene (FULLSCREEN) ----
+  function showRestScene({ title, body, imgSrc }) {
+    const panel = ensureRestScenePanel();
+    const t = $("restTitle");
+    const b = $("restBody");
+    const img = $("restCharImg");
+    if (t) t.textContent = title || "休息";
+    if (b) b.textContent = body || "";
+    if (img && imgSrc) img.src = imgSrc;
+    if (img) img.style.imageRendering = "pixelated";
+    forceShow(panel, "block");
+  }
+  function hideRestScene() {
+    const panel = ensureRestScenePanel();
+    forceHide(panel);
   }
 
   // backdrop click closes modal (safety)
@@ -264,9 +369,6 @@
     // view
     setActiveView,
 
-    // hero img
-    setHeroImageSrc,
-
     // modal
     openNameModal,
     closeNameModal,
@@ -274,6 +376,9 @@
     // end overlay
     showEndOverlay,
     hideEndOverlay,
+
+    // hero
+    setHeroPortrait,
 
     // text
     setPlayerName,
@@ -297,5 +402,9 @@
     // run scene
     showRunScene,
     hideRunScene,
+
+    // rest scene
+    showRestScene,
+    hideRestScene,
   };
 })();
