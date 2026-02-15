@@ -1,8 +1,4 @@
 // game.js
-// 目的：疲労が「戦略」になる／怪我が「代償」になる／3回で引退END
-// 改良：
-//  - 「次ターンへ」ボタン廃止：行動を選ぶと自動で次ターンへ
-//  - 改良4：大会（開催・結果・次大会へ）実装
 (function () {
   const KEY = "sd_save_v1";
 
@@ -36,6 +32,92 @@
   }
 
   // ----------------------------
+  // Practice Items (改良：通常練習画面)
+  // ※固有の文言・構成をコピーしないよう「一般的な陸上メニュー」にしています
+  // ----------------------------
+  const PRACTICE_ITEMS = [
+    // チーム練習
+    {
+      id: "team_run_short",
+      group: "team",
+      name: "ランニング（短め）",
+      desc: "基礎体力を作る。疲労は軽め。",
+      effects: { STA:+2, MEN:+1, fatigue:+8 },
+      tags:["safe","plus"]
+    },
+    {
+      id: "team_run_long",
+      group: "team",
+      name: "ランニング（長め）",
+      desc: "持久力と根性。疲労は溜まりやすい。",
+      effects: { STA:+3, MEN:+1, fatigue:+14 },
+      tags:["plus","fat"]
+    },
+    {
+      id: "team_relay",
+      group: "team",
+      name: "リレー連携",
+      desc: "技術と集中。気持ちも上がる。",
+      effects: { TEC:+2, MEN:+2, fatigue:+10 },
+      tags:["plus"]
+    },
+    {
+      id: "team_dash_10",
+      group: "team",
+      name: "短距離ダッシュ（反復）",
+      desc: "スピード刺激。疲労は中〜高。",
+      effects: { SPD:+2, ACC:+2, fatigue:+15 },
+      tags:["plus","fat"]
+    },
+
+    // 個人練習
+    {
+      id: "solo_start",
+      group: "solo",
+      name: "スタート練習",
+      desc: "加速と反応を磨く。",
+      effects: { ACC:+3, TEC:+1, fatigue:+12 },
+      tags:["plus"]
+    },
+    {
+      id: "solo_form",
+      group: "solo",
+      name: "フォーム確認（流し）",
+      desc: "技術と再現性。疲労は軽め。",
+      effects: { TEC:+3, MEN:+1, fatigue:+9 },
+      tags:["safe","plus"]
+    },
+    {
+      id: "solo_core",
+      group: "solo",
+      name: "体幹",
+      desc: "軸を作る。ブレが減る。",
+      effects: { STA:+2, TEC:+1, fatigue:+10 },
+      tags:["plus"]
+    },
+    {
+      id: "solo_steps",
+      group: "solo",
+      name: "ステップ＆リズム",
+      desc: "動きのキレを出す。",
+      effects: { SPD:+1, TEC:+2, fatigue:+11 },
+      tags:["plus"]
+    },
+    {
+      id: "solo_mental",
+      group: "solo",
+      name: "イメトレ／メンタル",
+      desc: "集中と自信。疲労はほぼ増えない。",
+      effects: { MEN:+4, fatigue:+2 },
+      tags:["safe","plus"]
+    },
+  ];
+
+  function getPracticeItemById(id){
+    return PRACTICE_ITEMS.find(x => x.id === id) || null;
+  }
+
+  // ----------------------------
   // Default State
   // ----------------------------
   function defaultState() {
@@ -50,30 +132,19 @@
         fatigue: 0,
         injuryCount: 0,
         growthTraits: SD_DATA.genGrowthTraits(),
-        formBonusActive: false,
         retired: false
       },
       team: SD_DATA.makeTeamMembers(),
-      turn: {
-        grade: 1,
-        month: 4,
-        term: 1, // 1=上旬,2=中旬,3=下旬
-      },
+      turn: { grade: 1, month: 4, term: 1 },
       selectedMenu: "tempo",
       nextMeet: {
-        // 改良4：大会を“イベント”として扱う
         name: "新人戦 地区大会",
-        level: "C",          // 難易度：C/B/A/S（MVP）
-        distance: "100m",    // 表示だけ（MVP）
-        turnsLeft: 3,        // 0で開催
-      },
-      flags: {
-        campSummer: false,
-        campWinter: false,
-        allJapanCamp: false,
+        level: "C",
+        distance: "100m",
+        turnsLeft: 3,
       },
       lastEvent: "",
-      lastMeetResult: "",   // ★改良4：大会結果ログ
+      lastMeetResult: "",
     };
   }
 
@@ -93,7 +164,7 @@
     if (state.lastMeetResult) return "勝負の一瞬は、積み重ねの答え合わせだ。";
     const meet = state.nextMeet;
     if (meet.turnsLeft <= 1) return "次は勝負。迷いを削っていこう。";
-    return "春風高校は弱小。でも、積み上げた分だけ速くなる。";
+    return "積み上げた分だけ、速くなる。";
   }
 
   function nextMeetText(state) {
@@ -106,11 +177,7 @@
     if (state.player.retired) {
       return "よく頑張った。結果だけが全てじゃない。君の走りは、君のものだ。";
     }
-
-    // 大会結果が直近に出たらそれを優先
-    if (state.lastMeetResult) {
-      return state.lastMeetResult;
-    }
+    if (state.lastMeetResult) return state.lastMeetResult;
 
     if (state.lastEvent && state.lastEvent.includes("怪我")) {
       return "今は治すことが最優先だよ。焦りは、痛みより長引くからね。";
@@ -125,35 +192,11 @@
     if (f >= 80) return "無理は禁物だよ。休むのも立派な練習だ。";
     if (f >= 55) return "疲れが溜まってきたね。回復も予定に入れよう。";
 
-    const s = state.player.stats;
-    const pairs = Object.entries(s).sort((a,b)=>a[1]-b[1]);
-    const weakest = pairs[0][0];
-    const hint = {
-      SPD:"スピード", ACC:"加速", POW:"筋力", TEC:"技術", STA:"持久", MEN:"メンタル"
-    }[weakest] || "基礎";
-
-    return `${hint}を少し意識してみよう。丁寧にいこう。`;
+    return "今日は何を積む？ 小さくても、ちゃんと前に進む。";
   }
 
   // ----------------------------
-  // Menu
-  // ----------------------------
-  function setMenu(state, menuKey) {
-    state.selectedMenu = menuKey;
-    const map = {
-      start: "スタート練習",
-      tempo: "流し（フォーム意識）",
-      power: "筋トレ",
-      core: "体幹",
-      mental: "メンタル",
-      massage: "マッサージ",
-      rest: "休養",
-    };
-    SD_UI.setSceneTitle(map[menuKey] || "練習");
-  }
-
-  // ----------------------------
-  // Training System (fatigue efficiency + injury)
+  // Training System
   // ----------------------------
   function trainingEfficiencyByFatigue(fatigue) {
     // 0%→1.00, 50%→0.75, 80%→0.55, 100%→0.40
@@ -161,28 +204,23 @@
     return SD_DATA.clamp(eff, 0.40, 1.00);
   }
 
-  const MENU_INTENSITY = {
-    start: 1.15,
-    tempo: 1.00,
-    power: 1.25,
-    core: 1.05,
-    mental: 0.85,
-    massage: 0.20,
-    rest: 0.10,
+  // 単発行動（強化/回復）
+  const ACTIONS = {
+    power:   { name:"強化（筋トレ）", effects:{ POW:+4, STA:+1, fatigue:+20 }, vibe:"脚が重い。でも、明日の脚になる。" },
+    massage: { name:"マッサージ",     effects:{ ALL:+1, fatigue:-20 }, vibe:"体がほぐれて、視界が明るくなる。" },
+    rest:    { name:"休養",           effects:{ fatigue:-42 }, vibe:"休むのも練習。焦りだけは置いていく。" },
   };
 
-  function injuryRoll(state, action) {
+  function injuryRoll(state, intensityMul) {
     const p = state.player;
-    if (action === "rest" || action === "massage" || action === "mental") return false;
-
     const f = p.fatigue;
+
     if (f < 65) return false;
 
     const base = ((f - 65) / 35); // 0..1
     const curve = Math.pow(SD_DATA.clamp(base, 0, 1), 1.35);
     let prob = curve * 0.18;
-
-    prob *= (MENU_INTENSITY[action] || 1.0);
+    prob *= intensityMul;
 
     const growth = p.growthTraits?.growth ?? 100;
     prob *= SD_DATA.clamp(0.90 + (growth - 100) * 0.003, 0.85, 1.15);
@@ -214,85 +252,70 @@
     }
   }
 
-  function applyTraining(state, action) {
+  function applyEffects(state, effects, intensityMul, vibeText) {
     const p = state.player;
-    if (p.retired) return;
-
     const s = p.stats;
 
-    const base = {
-      start:   { ACC: +3, TEC: +2, fatigue: +16, vibe: "スタートの音が、体に入る。" },
-      tempo:   { TEC: +3, MEN: +2, fatigue: +12, vibe: "フォームが一瞬だけ“揃う”。" },
-      power:   { POW: +4, STA: +1, fatigue: +20, vibe: "脚が重い。でも、明日の脚になる。" },
-      core:    { STA: +3, TEC: +1, fatigue: +14, vibe: "軸が少し安定した気がする。" },
-      mental:  { MEN: +4, fatigue: +3,  vibe: "呼吸が落ち着く。勝負は心からだ。" },
-      massage: { all: +1, fatigue: -20, vibe: "体がほぐれて、視界が明るくなる。" },
-      rest:    { fatigue: -42, vibe: "休むのも練習。焦りだけは置いていく。" },
-    }[action];
-
-    if (!base) return;
-
-    SD_UI.setAtmosphereText(atmosphereText(state));
-    SD_UI.setSceneCaption(base.vibe);
+    SD_UI.setSceneCaption(vibeText || "—");
 
     const fatigueEff = trainingEfficiencyByFatigue(p.fatigue);
     const growthEff = (p.growthTraits?.growth ?? 100) / 100;
+
+    // 複数練習は後半ほど効率が落ちる（やり過ぎ防止）
     const mult = fatigueEff * growthEff;
 
-    if (base.all) {
+    if (effects.ALL) {
       for (const k of ["SPD","ACC","POW","TEC","STA","MEN"]) {
-        s[k] = clampStat(s[k] + Math.max(0, Math.round(base.all * mult)));
+        s[k] = clampStat((s[k] ?? 0) + Math.max(0, Math.round(effects.ALL * mult)));
       }
     } else {
       for (const k of ["SPD","ACC","POW","TEC","STA","MEN"]) {
-        if (base[k]) s[k] = clampStat(s[k] + Math.max(0, Math.round(base[k] * mult)));
+        if (effects[k]) s[k] = clampStat((s[k] ?? 0) + Math.max(0, Math.round(effects[k] * mult)));
       }
     }
 
-    if (typeof base.fatigue === "number") {
-      p.fatigue = SD_DATA.clamp(p.fatigue + base.fatigue, 0, 100);
+    if (typeof effects.fatigue === "number") {
+      p.fatigue = SD_DATA.clamp((p.fatigue ?? 0) + effects.fatigue, 0, 100);
     }
 
-    const injured = injuryRoll(state, action);
-    if (injured) {
-      applyInjury(state);
-      SD_UI.setSceneCaption("ピキッ…と嫌な感触。胸が冷える。");
-    }
-
-    if (!p.retired && p.fatigue >= 100) {
-      applyInjury(state);
-      SD_UI.setSceneCaption("限界を越えた。足が言うことをきかない。");
+    // 怪我判定（回復はほぼ無し）
+    if (intensityMul > 0.01) {
+      const injured = injuryRoll(state, intensityMul);
+      if (injured) {
+        applyInjury(state);
+        SD_UI.setSceneCaption("ピキッ…と嫌な感触。胸が冷える。");
+      }
+      if (!p.retired && p.fatigue >= 100) {
+        applyInjury(state);
+        SD_UI.setSceneCaption("限界を越えた。足が言うことをきかない。");
+      }
     }
 
     // チーム波及（軽量）
-    const teamMult = 0.30;
-    if (!p.retired && action !== "rest") {
+    if (!p.retired && intensityMul > 0.01) {
+      const teamMult = 0.25;
       for (const m of state.team) {
         const keys = Object.entries(m.stats).sort((a,b)=>a[1]-b[1]).map(x=>x[0]);
         const k1 = keys[0];
         const k2 = keys[1];
-        const gain = (action === "massage") ? 1 : 0;
-
-        m.stats[k1] = clampStat(m.stats[k1] + Math.max(1, Math.round((gain + 1) * teamMult)));
-        m.stats[k2] = clampStat(m.stats[k2] + Math.max(0, Math.round((gain + 0) * teamMult)));
+        m.stats[k1] = clampStat((m.stats[k1] ?? 0) + Math.max(1, Math.round(teamMult)));
+        m.stats[k2] = clampStat((m.stats[k2] ?? 0) + Math.max(0, Math.round(teamMult)));
       }
       recalcTeamPowers(state);
     }
   }
 
   // ----------------------------
-  // 改良4：大会（MVP）
+  // Meet (大会) MVP
   // ----------------------------
   function meetDifficultyMultiplier(level) {
-    // 高いほど厳しい（要求値が上がる）
     return (level === "S") ? 1.25
       : (level === "A") ? 1.15
       : (level === "B") ? 1.07
-      : 1.00; // C
+      : 1.00;
   }
 
   function calcPlayerRacePower(state) {
-    // レースパワー：SPD/ACC/TEC中心 + STA/MEN少し
     const p = state.player;
     const s = p.stats || {};
     const base =
@@ -302,17 +325,13 @@
       (s.STA ?? 0) * 0.12 +
       (s.MEN ?? 0) * 0.10;
 
-    // 疲労ペナルティ（0%→1.0 / 80%→0.75 / 100%→0.62）
     const f = SD_DATA.clamp(p.fatigue ?? 0, 0, 100);
     const fatigueMul = SD_DATA.clamp(1.0 - (f * 0.0038), 0.62, 1.00);
 
-    // 怪我ペナルティ（怪我回数で少し落ちる）
     const inj = p.injuryCount ?? 0;
     const injuryMul = SD_DATA.clamp(1.0 - inj * 0.06, 0.80, 1.00);
 
-    // ブレ（当日の感覚）
-    const rng = 0.92 + Math.random() * 0.16; // 0.92..1.08
-
+    const rng = 0.92 + Math.random() * 0.16;
     return base * fatigueMul * injuryMul * rng;
   }
 
@@ -320,71 +339,45 @@
     const m = state.nextMeet;
     const diff = meetDifficultyMultiplier(m.level);
 
-    // 目安要求値（MVP）：学年が上がるほど要求も上がる
     const grade = state.player.grade ?? 1;
-    const reqBase = 48 + grade * 9; // 1年:57, 2年:66, 3年:75
+    const reqBase = 48 + grade * 9;
     const req = reqBase * diff;
 
     const score = calcPlayerRacePower(state);
 
-    // 判定：大雑把に「通過/入賞/優勝」まで用意（演出はテキスト）
     let tier = "敗退";
     if (score >= req * 1.10) tier = "優勝";
     else if (score >= req * 1.04) tier = "入賞";
     else if (score >= req * 0.98) tier = "通過";
     else tier = "敗退";
 
-    // 報酬：結果が良いほど成長 + メンタル上昇 / 疲労も増える
     const p = state.player;
     const s = p.stats;
 
-    const gainAll = (tier === "優勝") ? 2
-      : (tier === "入賞") ? 1
-      : (tier === "通過") ? 0
-      : 0;
+    const gainAll = (tier === "優勝") ? 2 : (tier === "入賞") ? 1 : 0;
+    const gainMen = (tier === "優勝") ? 4 : (tier === "入賞") ? 2 : (tier === "通過") ? 1 : -1;
+    const fatigueAdd = (tier === "優勝") ? 18 : (tier === "入賞") ? 16 : (tier === "通過") ? 15 : 14;
 
-    const gainMen = (tier === "優勝") ? 4
-      : (tier === "入賞") ? 2
-      : (tier === "通過") ? 1
-      : -1;
-
-    // 疲労（大会は重い）
-    const fatigueAdd = (tier === "優勝") ? 18
-      : (tier === "入賞") ? 16
-      : (tier === "通過") ? 15
-      : 14;
-
-    // 反映（最低0で丸め）
     for (const k of ["SPD","ACC","POW","TEC","STA","MEN"]) {
       if (gainAll > 0) s[k] = clampStat((s[k] ?? 0) + gainAll);
     }
     s.MEN = clampStat((s.MEN ?? 0) + gainMen);
-
     p.fatigue = SD_DATA.clamp((p.fatigue ?? 0) + fatigueAdd, 0, 100);
 
-    // 結果文
-    const headline =
-      `【大会】${m.name}（${m.distance} / 難易度${m.level}）`;
-
+    const headline = `【大会】${m.name}（${m.distance} / 難易度${m.level}）`;
     let line = "";
     if (tier === "優勝") line = `${headline}：優勝。会場が少し静かになって、次に歓声が来た。`;
     else if (tier === "入賞") line = `${headline}：入賞。結果が形になった。自信は静かに強い。`;
     else if (tier === "通過") line = `${headline}：通過。課題は残る。でも、前には進んだ。`;
     else line = `${headline}：敗退。悔しい。だが、悔しさは次の練習に変えられる。`;
 
-    // ここでは「次大会に進む」概念はMVP：勝ちでも負けでも次大会へ
     state.lastMeetResult = line;
+    SD_UI.setCoachSub(`レース力 ${score.toFixed(1)} / 目安 ${req.toFixed(1)}（疲労:${p.fatigue}%）`);
 
-    // 大会直後の一言（右下の補助テキスト）
-    SD_UI.setCoachSub(`レースパワー ${score.toFixed(1)} / 目安 ${req.toFixed(1)}（疲労:${p.fatigue}%）`);
-
-    // 次大会を生成（簡易：難易度が少しずつ上がる）
     state.nextMeet = generateNextMeet(state, tier);
   }
 
   function generateNextMeet(state, tier) {
-    // 月が進むごとに大会感を増す（MVP）
-    // 難易度の上がり方は「通過以上で上がりやすい」
     const old = state.nextMeet;
     const lvOrder = ["C","B","A","S"];
     const idx = lvOrder.indexOf(old.level);
@@ -394,7 +387,6 @@
     const grade = state.player.grade ?? 1;
     const month = state.turn.month ?? 4;
 
-    // 名前はオリジナル（既存作品の固有名を避ける）
     const pool = [
       "春季記録会",
       "地区チャレンジ",
@@ -402,15 +394,13 @@
       "選考会",
       "夏前記録会",
       "県トライアル",
-      "近畿チャレンジ",
+      "広域チャレンジ",
       "全国前哨戦",
     ];
     const name = pool[(month + grade) % pool.length];
 
     const dist = (Math.random() < 0.65) ? "100m" : "400m";
     const level = lvOrder[nextIdx];
-
-    // 3ターン後に開催、に固定（テンポ良く）
     return { name, level, distance: dist, turnsLeft: 3 };
   }
 
@@ -420,15 +410,9 @@
   function advanceTurn(state) {
     if (state.player.retired) return;
 
-    // ターン開始時の大会結果ログは、1ターン表示したら消す（ログはstateに残してもOKだがMVPは軽く）
-    // →「大会の余韻」を残したいなら消さない運用に変更可能
-    // ここでは “次の行動までの間だけ表示” にするため、ターン進行時にクリアする
-    state.lastMeetResult = "";
-
-    // 次大会までカウント
+    // 大会結果は「次の行動まで表示」したいので、ここでは消さない（UI更新時に優先表示）
     if (state.nextMeet.turnsLeft > 0) state.nextMeet.turnsLeft -= 1;
 
-    // 年月ターン進行
     state.turn.term += 1;
     if (state.turn.term >= 4) {
       state.turn.term = 1;
@@ -438,13 +422,10 @@
         state.turn.month = 4;
         state.turn.grade += 1;
         state.player.grade = state.turn.grade;
-
-        // チーム進級（簡易）
         for (const m of state.team) m.grade = Math.min(3, m.grade + 1);
       }
     }
 
-    // ターン開始の空気
     state.lastEvent = "";
     SD_UI.setAtmosphereText(atmosphereText(state));
     SD_UI.setSceneCaption(sceneCaption(state));
@@ -477,39 +458,192 @@
       return true;
     }
 
-    if (randBtn) {
-      randBtn.addEventListener("click", () => {
-        if (input) {
-          input.value = SD_DATA.randomPlayerName();
-          input.focus();
-        }
-      });
-    }
+    randBtn?.addEventListener("click", () => {
+      if (input) {
+        input.value = SD_DATA.randomPlayerName();
+        input.focus();
+      }
+    });
 
-    if (saveBtn) {
-      saveBtn.addEventListener("click", () => {
-        applyName(input ? input.value : "");
-      });
-    }
+    saveBtn?.addEventListener("click", () => applyName(input ? input.value : ""));
 
-    if (input) {
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") applyName(input.value);
-      });
-    }
+    input?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") applyName(input.value);
+    });
 
-    if (back) {
-      back.addEventListener("click", (e) => {
+    back?.addEventListener("click", (e) => {
+      if (e.target === back) {
         // 名前必須：背景クリックでは閉じない
-        if (e.target === back) {
-          // do nothing
-        }
-      });
-    }
+      }
+    });
   }
 
   // ----------------------------
-  // Actions (自動で次ターンへ)
+  // Practice Modal (最大3つ)
+  // ----------------------------
+  function wirePracticeModal(state, onAfterAction) {
+    const openBtn = document.getElementById("openPracticeBtn");
+    const back = document.getElementById("practiceModalBackdrop");
+    const cancelBtn = document.getElementById("practiceCancelBtn");
+    const confirmBtn = document.getElementById("practiceConfirmBtn");
+
+    let picked = new Set();
+
+    function refreshPickUI(){
+      SD_UI.setPracticePickCount(picked.size);
+      if (confirmBtn) confirmBtn.disabled = picked.size === 0;
+    }
+
+    function clearPick(){
+      picked = new Set();
+      // チェック外す
+      back?.querySelectorAll('input[type="checkbox"][data-pid]')?.forEach(ch => ch.checked = false);
+      refreshPickUI();
+    }
+
+    function open(){
+      if (state.player.retired) return;
+      if (!state.player.name || !state.player.name.trim()) {
+        SD_UI.openNameModal();
+        return;
+      }
+
+      // 描画（初回のみでもOKだが、後で増える想定なので毎回OK）
+      SD_UI.renderPracticeLists(PRACTICE_ITEMS);
+      clearPick();
+      SD_UI.openPracticeModal();
+    }
+
+    function close(){
+      SD_UI.closePracticeModal();
+    }
+
+    // クリックでトグル（ラベル全体押しやすく）
+    function bindListClicks(){
+      back?.addEventListener("click", (e) => {
+        const target = e.target;
+        if (!(target instanceof Element)) return;
+
+        const pid = target.getAttribute("data-pid") || target.closest("[data-pid]")?.getAttribute("data-pid");
+        if (!pid) return;
+
+        const checkbox = back.querySelector(`input[type="checkbox"][data-pid="${pid}"]`);
+        if (!checkbox) return;
+
+        // checkbox直押しもラベル押しも同じ挙動
+        const willCheck = !checkbox.checked;
+
+        if (willCheck && picked.size >= 3) {
+          // 最大3つ
+          SD_UI.setTurnStateText("通常練習は最大3つまでです");
+          return;
+        }
+
+        checkbox.checked = willCheck;
+
+        if (checkbox.checked) picked.add(pid);
+        else picked.delete(pid);
+
+        refreshPickUI();
+      }, { passive: true });
+    }
+
+    openBtn?.addEventListener("click", open);
+    cancelBtn?.addEventListener("click", close);
+
+    // 背景クリックで閉じる（誤操作防止：閉じるが選択は保持しない）
+    back?.addEventListener("click", (e) => {
+      if (e.target === back) close();
+    });
+
+    confirmBtn?.addEventListener("click", () => {
+      if (state.player.retired) return;
+      if (picked.size === 0) return;
+
+      // 実行：選択した順は「チェック順」ではなく、安定のためid順（後でUI側で順番付けも可能）
+      const ids = Array.from(picked);
+      const items = ids.map(getPracticeItemById).filter(Boolean);
+
+      // 合計の感じ：後半ほど効率ダウン（multはapplyEffects側で疲労反映されるので自然に落ちる）
+      // intensity: 通常練習は中程度として 1.0
+      for (let i = 0; i < items.length; i++){
+        const it = items[i];
+        const intensity = 1.0;
+        const vibe = (i === 0)
+          ? `「${it.name}」…よし。`
+          : `続けて「${it.name}」。`;
+        applyEffects(state, it.effects, intensity, vibe);
+      }
+
+      // シーン（見た目だけ）を通常練習モードに寄せる
+      state.selectedMenu = "tempo";
+      if (window.SD_SCENE) SD_SCENE.setMode("tempo");
+
+      close();
+
+      // ターン進行
+      advanceTurn(state);
+
+      // 大会開催
+      if (!state.player.retired && state.nextMeet.turnsLeft <= 0) {
+        simulateMeet(state);
+      }
+
+      onAfterAction("通常練習を実行");
+      save(state);
+    });
+
+    bindListClicks();
+    refreshPickUI();
+  }
+
+  // ----------------------------
+  // Single actions (強化/回復) : 即実行→自動ターン
+  // ----------------------------
+  function wireSingleActions(state, onAfterAction) {
+    const btns = document.querySelectorAll('button[data-action]');
+    btns.forEach(btn => {
+      btn.addEventListener("click", () => {
+        if (state.player.retired) return;
+
+        if (!state.player.name || !state.player.name.trim()) {
+          SD_UI.openNameModal();
+          return;
+        }
+
+        const key = btn.getAttribute("data-action");
+        const act = ACTIONS[key];
+        if (!act) return;
+
+        const intensity = (key === "rest" || key === "massage") ? 0.01 : 1.25;
+        SD_UI.setSceneCaption(act.vibe);
+
+        // 回復のALL効果を処理
+        const eff = act.effects;
+        const vibe = act.vibe;
+
+        applyEffects(state, eff, intensity, vibe);
+
+        // シーンモード調整
+        state.selectedMenu = key;
+        if (window.SD_SCENE) SD_SCENE.setMode(key);
+
+        // ターン進行
+        advanceTurn(state);
+
+        // 大会開催
+        if (!state.player.retired && state.nextMeet.turnsLeft <= 0) {
+          simulateMeet(state);
+        }
+
+        onAfterAction(`${act.name} を実行`);
+        save(state);
+      });
+    });
+  }
+
+  // ----------------------------
+  // UI reflect
   // ----------------------------
   function reflectUI(state) {
     const t = state.turn;
@@ -520,86 +654,28 @@
     SD_UI.renderStats(state.player);
     SD_UI.renderTeam(state.team);
 
-    // 監督コメント
     SD_UI.setCoachLine(coachLineForTurn(state));
+    if (!state.lastMeetResult) SD_UI.setCoachSub("—");
 
-    // 状態表示
     SD_UI.setTurnStateText("行動を選んでください");
-  }
 
-  function reflectAfterAction(state, actionLabel) {
-    // 行動直後：補助テキスト
-    SD_UI.setTurnStateText(`「${actionLabel}」を実行 → 次ターンへ進みます`);
+    SD_UI.setAtmosphereText(atmosphereText(state));
+    SD_UI.setSceneCaption(sceneCaption(state));
   }
 
   function lockActionsIfRetired(state) {
     if (!state.player.retired) return;
-    const btns = document.querySelectorAll("button[data-action]");
-    btns.forEach(b => b.disabled = true);
-
-    SD_UI.setCoachLine(coachLineForTurn(state));
-    SD_UI.setSceneCaption("— 引退 END — もう一度走りたくなったら、また最初から。");
+    const btns = document.querySelectorAll("button");
+    btns.forEach(b => {
+      if (b.id === "nameRandomBtn" || b.id === "nameSaveBtn") return;
+      b.disabled = true;
+    });
+    SD_UI.setSceneCaption("— 引退 END — もう一度走りたくなったら、最初から。");
     SD_UI.setCoachSub("—");
   }
 
-  function actionLabel(action) {
-    const map = {
-      start: "スタート練習",
-      tempo: "流し（フォーム）",
-      power: "筋トレ",
-      core: "体幹",
-      mental: "メンタル",
-      massage: "マッサージ",
-      rest: "休養",
-    };
-    return map[action] || "行動";
-  }
-
-  function wireActions(state) {
-    const btns = document.querySelectorAll("button[data-action]");
-    btns.forEach(btn => {
-      btn.addEventListener("click", () => {
-        if (state.player.retired) return;
-
-        // 名前未設定なら先に入力
-        if (!state.player.name || !state.player.name.trim()) {
-          SD_UI.openNameModal();
-          return;
-        }
-
-        const action = btn.getAttribute("data-action");
-        if (!action) return;
-
-        // まず現在ターンで行動を実行
-        setMenu(state, action);
-        applyTraining(state, action);
-
-        reflectAfterAction(state, actionLabel(action));
-
-        // シーン反映
-        if (window.SD_SCENE) SD_SCENE.setMode(state.selectedMenu);
-
-        // ★ 自動で次ターンへ
-        advanceTurn(state);
-
-        // 大会開催判定（改良4）
-        if (!state.player.retired && state.nextMeet.turnsLeft <= 0) {
-          simulateMeet(state);
-        }
-
-        // 最終UI反映
-        reflectUI(state);
-
-        // 引退ならロック
-        lockActionsIfRetired(state);
-
-        save(state);
-      });
-    });
-  }
-
   // ----------------------------
-  // Scene (Canvas) : 既存路線を維持（見た目はCSS側で統一感）
+  // Scene (Canvas) : スマホで綺麗に（DPR対応）
   // ----------------------------
   function initScene(state) {
     const canvas = document.getElementById("sceneCanvas");
@@ -607,6 +683,23 @@
 
     const scene = makeSceneRenderer(canvas, ctx);
     window.SD_SCENE = scene;
+
+    // DPR対応：表示サイズに合わせて内部解像度を上げる
+    function resizeCanvas() {
+      const dpr = Math.max(1, Math.min(2.2, window.devicePixelRatio || 1));
+      const cssW = canvas.clientWidth || 940;
+      const cssH = Math.round(cssW * (360 / 940)); // アスペクト維持
+      canvas.style.height = cssH + "px";
+
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      scene.setViewport(cssW, cssH);
+    }
+
+    window.addEventListener("resize", resizeCanvas, { passive:true });
+    resizeCanvas();
 
     scene.setMode(state.selectedMenu);
     scene.start();
@@ -616,63 +709,12 @@
     let raf = 0;
     let mode = "tempo";
     let t = 0;
+    let vw = 940, vh = 360;
 
-    const runner = { x: 110, y: 250, speed: 1.6 };
+    const runner = { x: 110, y: 250, speed: 1.2 };
 
     function setMode(m) { mode = m; }
-
-    function drawBackground() {
-      const w = canvas.width, h = canvas.height;
-
-      const g = ctx.createLinearGradient(0, 0, 0, h);
-      g.addColorStop(0, "rgba(15,22,34,0.98)");
-      g.addColorStop(1, "rgba(8,12,20,0.98)");
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, w, h);
-
-      // upper haze
-      ctx.fillStyle = "rgba(0,0,0,0.28)";
-      ctx.fillRect(0, 90, w, 60);
-
-      // particles
-      ctx.fillStyle = "rgba(255,255,255,0.06)";
-      for (let i = 0; i < 220; i++) {
-        const x = (i * 17 + (t*1.0)) % w;
-        const y = 95 + (i % 4) * 14 + (Math.sin(i + t*0.01) * 1.5);
-        ctx.beginPath();
-        ctx.arc(x, y, 1.4, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      // track field
-      ctx.fillStyle = "rgba(58,167,255,0.10)";
-      ctx.fillRect(0, 165, w, 190);
-
-      ctx.strokeStyle = "rgba(255,255,255,0.10)";
-      ctx.lineWidth = 2;
-      for (let i = -w; i < w*2; i += 28) {
-        ctx.beginPath();
-        ctx.moveTo(i + (t*0.65)%28, 165);
-        ctx.lineTo(i + (t*0.65)%28 + 190, 355);
-        ctx.stroke();
-      }
-
-      ctx.strokeStyle = "rgba(255,255,255,0.18)";
-      ctx.lineWidth = 2;
-      const lanes = 4;
-      for (let i = 0; i <= lanes; i++) {
-        const y = 195 + i * 30;
-        ctx.beginPath();
-        ctx.moveTo(70, y);
-        ctx.lineTo(w - 70, y);
-        ctx.stroke();
-      }
-
-      // posts
-      ctx.fillStyle = "rgba(255,255,255,0.16)";
-      ctx.fillRect(86, 180, 4, 160);
-      ctx.fillRect(w-90, 180, 4, 160);
-    }
+    function setViewport(w,h){ vw = w; vh = h; }
 
     function roundRect(ctx, x, y, w, h, r) {
       const rr = Math.min(r, w/2, h/2);
@@ -685,60 +727,98 @@
       ctx.closePath();
     }
 
+    function drawBackground() {
+      // 明るいグラデ（原作寄せの“爽やかさ”）
+      const g = ctx.createLinearGradient(0, 0, 0, vh);
+      g.addColorStop(0, "rgba(240,244,252,1)");
+      g.addColorStop(1, "rgba(229,234,246,1)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, vw, vh);
+
+      // 遠景
+      ctx.fillStyle = "rgba(27,111,227,0.08)";
+      ctx.fillRect(0, Math.round(vh*0.18), vw, Math.round(vh*0.10));
+
+      // トラック
+      const top = Math.round(vh*0.40);
+      const bot = Math.round(vh*0.92);
+      ctx.fillStyle = "rgba(226,28,42,0.08)";
+      ctx.fillRect(0, top, vw, bot-top);
+
+      ctx.strokeStyle = "rgba(32,37,49,0.14)";
+      ctx.lineWidth = 2;
+      const lanes = 4;
+      for (let i = 0; i <= lanes; i++) {
+        const y = top + i * Math.round((bot-top)/lanes);
+        ctx.beginPath();
+        ctx.moveTo(18, y);
+        ctx.lineTo(vw - 18, y);
+        ctx.stroke();
+      }
+
+      // 斜めの流れ
+      ctx.strokeStyle = "rgba(27,111,227,0.08)";
+      for (let i = -vw; i < vw*2; i += 28) {
+        ctx.beginPath();
+        ctx.moveTo(i + (t*0.6)%28, top);
+        ctx.lineTo(i + (t*0.6)%28 + 160, bot);
+        ctx.stroke();
+      }
+    }
+
     function drawRunner() {
+      const baseY = Math.round(vh*0.74);
       const baseX = runner.x + (Math.sin(t * 0.02) * 2);
-      const baseY = runner.y + (Math.sin(t * 0.04) * 1.2);
 
       const sp = (mode === "rest") ? 0.2
         : (mode === "massage") ? 0.6
-        : (mode === "mental") ? 0.9
-        : (mode === "core") ? 1.1
-        : (mode === "tempo") ? 1.25
-        : (mode === "start") ? 1.4
         : (mode === "power") ? 1.0
-        : 1.1;
+        : 1.25;
 
       runner.speed = sp;
-      runner.x += sp * 0.35;
-      if (runner.x > canvas.width - 130) runner.x = 110;
+      runner.x += sp * 0.55;
+      if (runner.x > vw - 130) runner.x = 90;
 
-      const phase = t * 0.06 * sp;
+      const phase = t * 0.07 * sp;
       const armA = Math.sin(phase) * 10;
       const armB = Math.sin(phase + Math.PI) * 10;
       const legA = Math.sin(phase + Math.PI/2) * 12;
       const legB = Math.sin(phase + Math.PI/2 + Math.PI) * 12;
 
-      ctx.fillStyle = "rgba(0,0,0,0.32)";
+      // 影
+      ctx.fillStyle = "rgba(32,37,49,0.18)";
       ctx.beginPath();
-      ctx.ellipse(baseX+12, baseY+44, 16, 6, 0, 0, Math.PI*2);
+      ctx.ellipse(baseX+16, baseY+46, 18, 7, 0, 0, Math.PI*2);
       ctx.fill();
 
       ctx.save();
       ctx.translate(baseX, baseY);
-      ctx.rotate(-0.08);
+      ctx.rotate(-0.06);
 
       // head
-      ctx.fillStyle = "rgba(255,255,255,0.86)";
+      ctx.fillStyle = "rgba(255,255,255,0.92)";
       ctx.beginPath();
-      ctx.arc(16, -6, 10, 0, Math.PI * 2);
+      ctx.arc(18, -6, 10, 0, Math.PI * 2);
       ctx.fill();
+      ctx.strokeStyle = "rgba(32,37,49,0.14)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
 
-      // body
-      ctx.fillStyle = "rgba(255, 74, 87, 0.30)";
-      roundRect(ctx, 6, 6, 26, 22, 7);
+      // body（赤ユニ）
+      ctx.fillStyle = "rgba(226,28,42,0.22)";
+      roundRect(ctx, 8, 6, 28, 22, 7);
       ctx.fill();
-
-      ctx.fillStyle = "rgba(0,0,0,0.18)";
-      roundRect(ctx, 12, 12, 14, 10, 4);
-      ctx.fill();
+      ctx.strokeStyle = "rgba(226,28,42,0.22)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
 
       // limbs
-      ctx.strokeStyle = "rgba(255,255,255,0.78)";
+      ctx.strokeStyle = "rgba(32,37,49,0.55)";
       ctx.lineWidth = 5;
       ctx.lineCap = "round";
 
       ctx.save();
-      ctx.translate(10, 10);
+      ctx.translate(12, 10);
       ctx.rotate((armA * Math.PI) / 180);
       ctx.beginPath();
       ctx.moveTo(0, 0);
@@ -747,7 +827,7 @@
       ctx.restore();
 
       ctx.save();
-      ctx.translate(28, 10);
+      ctx.translate(32, 10);
       ctx.rotate((armB * Math.PI) / 180);
       ctx.beginPath();
       ctx.moveTo(0, 0);
@@ -755,11 +835,10 @@
       ctx.stroke();
       ctx.restore();
 
-      ctx.strokeStyle = "rgba(255,255,255,0.82)";
       ctx.lineWidth = 6;
 
       ctx.save();
-      ctx.translate(14, 28);
+      ctx.translate(16, 28);
       ctx.rotate((legA * Math.PI) / 180);
       ctx.beginPath();
       ctx.moveTo(0, 0);
@@ -768,7 +847,7 @@
       ctx.restore();
 
       ctx.save();
-      ctx.translate(24, 28);
+      ctx.translate(26, 28);
       ctx.rotate((legB * Math.PI) / 180);
       ctx.beginPath();
       ctx.moveTo(0, 0);
@@ -781,9 +860,9 @@
 
     function draw() {
       t += 1;
+      ctx.clearRect(0, 0, vw, vh);
       drawBackground();
       drawRunner();
-
       raf = requestAnimationFrame(draw);
     }
 
@@ -792,7 +871,7 @@
       raf = requestAnimationFrame(draw);
     }
 
-    return { start, setMode };
+    return { start, setMode, setViewport };
   }
 
   // ----------------------------
@@ -807,10 +886,7 @@
     // 初期UI
     SD_UI.setAtmosphereText(atmosphereText(state));
     SD_UI.setSceneCaption(sceneCaption(state));
-    SD_UI.setSceneTitle("フォーム意識（流し）");
-
-    SD_UI.renderStats(state.player);
-    SD_UI.renderTeam(state.team);
+    SD_UI.setSceneTitle("通常練習");
 
     SD_UI.setNextMeet(nextMeetText(state));
     SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
@@ -821,6 +897,9 @@
     const t = state.turn;
     SD_UI.setTurnText({ ...t, termLabel: termLabel(t.term) });
 
+    SD_UI.renderStats(state.player);
+    SD_UI.renderTeam(state.team);
+
     // scene
     initScene(state);
 
@@ -828,8 +907,17 @@
     wireNameModal(state);
     showNameModalIfNeeded(state);
 
+    // after action hook
+    const onAfterAction = (label) => {
+      SD_UI.setTurnStateText(`${label} → 次ターンへ`);
+      reflectUI(state);
+      lockActionsIfRetired(state);
+    };
+
     // actions
-    wireActions(state);
+    wireSingleActions(state, onAfterAction);
+    wirePracticeModal(state, onAfterAction);
+
     lockActionsIfRetired(state);
 
     save(state);
