@@ -1,5 +1,4 @@
 // ui.js
-// 安全にDOM更新しつつ、モーダルは確実に開閉する
 (function () {
   const $ = (id) => document.getElementById(id);
 
@@ -31,12 +30,20 @@
       }
     }, 0);
   }
-
   function closeNameModal() {
     const back = $("nameModalBackdrop");
     const input = $("nameInput");
     forceHide(back);
     if (input) input.blur();
+  }
+
+  function openPracticeModal() {
+    const back = $("practiceModalBackdrop");
+    forceShow(back);
+  }
+  function closePracticeModal() {
+    const back = $("practiceModalBackdrop");
+    forceHide(back);
   }
 
   // ---- text ----
@@ -87,19 +94,24 @@
     if (el) el.textContent = text || "";
   }
 
-  // ---- render ----
+  function setPracticePickCount(n) {
+    const el = $("practicePickCount");
+    if (el) el.textContent = String(n ?? 0);
+  }
+
+  // ---- render stats (日本語表記) ----
   function renderStats(player) {
     const grid = $("statsGrid");
     if (!grid || !player) return;
 
     const stats = player.stats || {};
     const rows = [
-      ["SPD", stats.SPD],
-      ["ACC", stats.ACC],
-      ["POW", stats.POW],
-      ["TEC", stats.TEC],
-      ["STA", stats.STA],
-      ["MEN", stats.MEN],
+      ["スピード", stats.SPD],
+      ["加速", stats.ACC],
+      ["パワー", stats.POW],
+      ["技術", stats.TEC],
+      ["持久力", stats.STA],
+      ["メンタル", stats.MEN],
     ];
 
     grid.innerHTML = rows
@@ -159,18 +171,42 @@
     if (tp) tp.textContent = `${total}`;
   }
 
-  // 背景クリックで閉じる（ただし名前未設定のときは閉じない）
-  document.addEventListener("click", (e) => {
-    const back = $("nameModalBackdrop");
-    if (!back) return;
-    if (e.target === back) {
-      // ゲーム側で未設定時の閉鎖は抑制する前提だが、念のためここでも閉じない
-    }
-  });
+  // ---- practice menu render ----
+  function renderPracticeLists(items) {
+    const teamList = $("practiceTeamList");
+    const soloList = $("practiceSoloList");
+    if (!teamList || !soloList) return;
+
+    const mk = (it) => {
+      const tags = [];
+      if (it.tags?.includes("plus")) tags.push(`<span class="tag plus">能力UP</span>`);
+      if (it.tags?.includes("fat")) tags.push(`<span class="tag fat">疲労</span>`);
+      if (it.tags?.includes("safe")) tags.push(`<span class="tag safe">軽め</span>`);
+
+      return `
+        <label class="practice-item" data-pid="${it.id}">
+          <input type="checkbox" data-pid="${it.id}" />
+          <div class="practice-meta">
+            <div class="practice-name">${it.name}</div>
+            <div class="practice-sub">${it.desc}</div>
+            <div class="practice-tags">${tags.join("")}</div>
+          </div>
+        </label>
+      `;
+    };
+
+    const team = items.filter(x => x.group === "team");
+    const solo = items.filter(x => x.group === "solo");
+
+    teamList.innerHTML = team.map(mk).join("");
+    soloList.innerHTML = solo.map(mk).join("");
+  }
 
   window.SD_UI = {
     openNameModal,
     closeNameModal,
+    openPracticeModal,
+    closePracticeModal,
     setPlayerName,
     setTurnText,
     setNextMeet,
@@ -180,7 +216,9 @@
     setSceneCaption,
     setSceneTitle,
     setTurnStateText,
+    setPracticePickCount,
     renderStats,
     renderTeam,
+    renderPracticeLists,
   };
 })();
