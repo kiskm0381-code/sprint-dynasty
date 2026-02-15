@@ -8,18 +8,13 @@
 </head>
 <body>
   <div class="app">
-    <!-- Top Header -->
+
+    <!-- ===== Top ===== -->
     <header class="topbar">
       <div class="top-left">
         <div class="badge" id="turnBadge">1年 4月 上旬</div>
         <div class="subtle" id="schoolBadge">春風高校 陸上部</div>
       </div>
-
-      <div class="top-center">
-        <div class="title">SPRINT DYNASTY</div>
-        <div class="subtitle" id="headerSubtitle">育成シミュレーション</div>
-      </div>
-
       <div class="top-right">
         <div class="next-meet">
           <div class="label">NEXT</div>
@@ -28,11 +23,35 @@
       </div>
     </header>
 
+    <!-- ===== Main ===== -->
     <main class="main">
-      <!-- Left Column -->
-      <section class="col left">
-        <!-- Player -->
-        <section class="panel player">
+      <!-- Left: scene -->
+      <section class="panel scene">
+        <div class="panel-head">
+          <div class="panel-head-left">
+            <span class="chip">シーン</span>
+            <span class="scene-title" id="sceneTitle">通常練習</span>
+          </div>
+          <div class="panel-head-right">
+            <span class="weather-hint" id="atmosphereText">夕方、風が少し冷たい。</span>
+          </div>
+        </div>
+
+        <div class="scene-wrap">
+          <canvas id="sceneCanvas" width="940" height="420"></canvas>
+          <div class="scene-overlay">
+            <div class="scene-caption" id="sceneCaption">春風高校は弱小。でも、直線は嘘をつかない。</div>
+          </div>
+        </div>
+
+        <div class="scene-foot">
+          <div class="coachline" id="coachLine">「焦るな。まだ時間はある。まず“自分の走り”を見つけよう。」</div>
+        </div>
+      </section>
+
+      <!-- Right: status -->
+      <section class="right-col">
+        <section class="panel status">
           <div class="panel-head">
             <div class="panel-head-left">
               <span class="chip">主人公</span>
@@ -44,87 +63,29 @@
             </div>
           </div>
 
-          <div class="player-body">
-            <div class="portrait" aria-hidden="true">
-              <div class="portrait-inner">
-                <div class="portrait-face"></div>
+          <div class="status-grid">
+            <div class="portrait">
+              <div class="portrait-frame">
+                <img id="playerSprite" class="pixel" src="./assets/hero_idle.png" alt="主人公ドット" />
               </div>
-              <div class="portrait-note" id="portraitNote">1年 / 春風高校</div>
+              <div class="portrait-sub" id="portraitSub">1年 / 春風高校</div>
             </div>
 
-            <div class="stats-wrap">
-              <div class="stats-grid" id="statsGrid"></div>
+            <div class="stats" id="statsGrid"></div>
+          </div>
 
-              <div class="fatigue-block">
-                <div class="fatigue-head">
-                  <div class="label">疲労</div>
-                  <div class="value"><span id="fatigueValue">0</span>%</div>
-                </div>
-                <div class="bar">
-                  <div class="bar-fill" id="fatigueBar" style="width:0%"></div>
-                </div>
-                <div class="fatigue-note" id="fatigueNote">
-                  疲労が高いほど成長効率が落ち、一定以上で怪我リスクが上がります。
-                </div>
-              </div>
+          <div class="fatigue-block">
+            <div class="fatigue-head">
+              <div class="label">疲労</div>
+              <div class="value"><span id="fatigueValue">0</span>%</div>
             </div>
+            <div class="bar">
+              <div class="bar-fill" id="fatigueBar" style="width:0%"></div>
+            </div>
+            <div class="fatigue-note" id="fatigueNote">疲労が高いほど成長効率が落ち、一定以上で怪我リスクが上がります。</div>
           </div>
         </section>
 
-        <!-- Scene -->
-        <section class="panel scene">
-          <div class="panel-head">
-            <div class="panel-head-left">
-              <span class="chip">シーン</span>
-              <span class="scene-title" id="sceneTitle">フォーム意識（流し）</span>
-            </div>
-            <div class="panel-head-right">
-              <span class="weather-hint" id="atmosphereText">夕方、風が少し冷たい。</span>
-            </div>
-          </div>
-
-          <div class="scene-wrap">
-            <canvas id="sceneCanvas" width="940" height="360"></canvas>
-            <div class="scene-overlay">
-              <div class="scene-caption" id="sceneCaption">積み上げた分だけ、速くなる。</div>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <!-- Right Column -->
-      <section class="col right">
-        <!-- Actions -->
-        <section class="panel actions">
-          <div class="panel-head">
-            <div class="panel-head-left">
-              <span class="chip">行動</span>
-              <span class="subtle">（決定すると自動で次ターン）</span>
-            </div>
-            <div class="panel-head-right">
-              <span class="chip chip-dark">状態</span>
-              <span class="subtle" id="turnStateText">行動を選んでください</span>
-            </div>
-          </div>
-
-          <div class="actions-body">
-            <div class="action-row">
-              <button class="btn btn-primary" id="openPracticeBtn">通常練習</button>
-              <button class="btn btn-warn" data-action="power">強化（筋トレ）</button>
-            </div>
-
-            <div class="action-row">
-              <button class="btn btn-secondary" data-action="massage">マッサージ</button>
-              <button class="btn btn-secondary" data-action="rest">休養</button>
-            </div>
-
-            <div class="action-note">
-              ※通常練習は最大3つまで選択できます（決定→自動で次ターン）
-            </div>
-          </div>
-        </section>
-
-        <!-- Team -->
         <section class="panel team">
           <div class="panel-head">
             <div class="panel-head-left">
@@ -136,34 +97,29 @@
               <span class="subtle" id="teamPowerText">—</span>
             </div>
           </div>
+
           <div class="team-list" id="teamList"></div>
-        </section>
-
-        <!-- Coach -->
-        <section class="panel coach">
-          <div class="panel-head">
-            <div class="panel-head-left">
-              <span class="chip">監督コメント</span>
-            </div>
-          </div>
-
-          <div class="coachbox">
-            <div class="coach-icon" aria-hidden="true"></div>
-            <div class="coach-text">
-              <div class="coach-name">監督（おじちゃん先生）</div>
-              <div class="coach-line" id="coachLine">「焦るな。まだ時間はある。まず“自分の走り”を見つけよう。」</div>
-              <div class="coach-sub" id="coachSub">—</div>
-            </div>
-          </div>
         </section>
       </section>
     </main>
+
+    <!-- ===== Bottom Actions (Home) ===== -->
+    <section class="panel actions">
+      <div class="actions-row">
+        <button class="btn btn-primary" data-action="open_training">通常練習</button>
+        <button class="btn" data-action="special_stub">特殊練習（準備中）</button>
+        <button class="btn btn-secondary" data-action="rest">休息</button>
+        <div class="spacer"></div>
+        <button class="btn" data-action="rename">名前変更</button>
+        <button class="btn" data-action="reset_confirm">リセット</button>
+      </div>
+    </section>
   </div>
 
-  <!-- Name modal -->
+  <!-- ===== Name modal ===== -->
   <div class="modal-backdrop" id="nameModalBackdrop" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="nameModalTitle">
-      <div class="modal-title" id="nameModalTitle">名前を入力してください</div>
+    <div class="modal">
+      <div class="modal-title">名前を入力してください</div>
       <div class="modal-desc">主人公の名前はいつでも変更できます（ローカル保存）。</div>
       <input id="nameInput" class="modal-input" type="text" maxlength="12" placeholder="例：ケイスケ" />
       <div class="modal-actions">
@@ -174,38 +130,35 @@
     </div>
   </div>
 
-  <!-- Practice modal (改良：通常練習画面) -->
-  <div class="modal-backdrop" id="practiceModalBackdrop" hidden>
-    <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="practiceModalTitle">
-      <div class="modal-title" id="practiceModalTitle">通常練習（最大3つ選択）</div>
-      <div class="modal-desc">
-        チェックした練習をまとめて実行します。<b>決定すると自動で次ターンに進みます。</b>
+  <!-- ===== Training Select (改良4：通常練習) ===== -->
+  <div class="modal-backdrop" id="trainingBackdrop" hidden>
+    <div class="modal modal-wide">
+      <div class="modal-title">通常練習</div>
+      <div class="modal-desc" id="trainingDesc">
+        練習は複数選べます。やりすぎは疲労が増え、伸びは頭打ちになります。
       </div>
 
-      <div class="practice-grid">
-        <section class="practice-col">
-          <div class="practice-head">チーム練習</div>
-          <div class="practice-list" id="practiceTeamList"></div>
-        </section>
-
-        <section class="practice-col">
-          <div class="practice-head">個人練習</div>
-          <div class="practice-list" id="practiceSoloList"></div>
-        </section>
-      </div>
-
-      <div class="practice-footer">
-        <div class="pick-info">
-          選択：<b><span id="practicePickCount">0</span>/3</b>
-          <span class="subtle" id="practiceHint">（おすすめ：フォーム→スタート→体幹）</span>
+      <div class="training-groups">
+        <div class="tgroup">
+          <div class="tgroup-title">チーム練習</div>
+          <div class="tlist" id="teamTrainingList"></div>
         </div>
-        <div class="modal-actions">
-          <button class="btn btn-secondary" id="practiceCancelBtn">戻る</button>
-          <button class="btn btn-primary" id="practiceConfirmBtn">決定（実行）</button>
+        <div class="tgroup">
+          <div class="tgroup-title">個人練習</div>
+          <div class="tlist" id="soloTrainingList"></div>
         </div>
       </div>
 
-      <div class="modal-note">※スマホでも押しやすい大きさにしています。</div>
+      <div class="training-foot">
+        <div class="training-preview">
+          <div class="preview-line" id="trainingPreview">選択：0件 / 予想疲労：+0 / 伸び効率：100%</div>
+          <div class="preview-sub" id="trainingWarn">疲労が高い状態で強い練習をすると怪我の危険が増えます。</div>
+        </div>
+        <div class="training-actions">
+          <button class="btn btn-secondary" id="trainingCancelBtn">戻る</button>
+          <button class="btn btn-primary" id="trainingGoBtn">練習開始 → 次ターンへ</button>
+        </div>
+      </div>
     </div>
   </div>
 
