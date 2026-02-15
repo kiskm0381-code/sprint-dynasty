@@ -1,11 +1,11 @@
-// game.js (改良5)
-// 目的：
-// - HOMEの主人公枠：顔ドット（hero_portrait.png）を比率維持で枠いっぱいに表示
-// - 練習開始時：画面いっぱいの「走る演出」を表示（ターン進行を強調）
-// - 走る演出：hero_idle.png（練習/特殊/大会の走行専用）を使用
-// - hero_idle.png の「白背景」が邪魔な場合：白っぽい色を透明化して描画
-// - 休息：キャラ紹介風のフルスクリーン演出を挟んでターン進行を強調
-// - 既存のHOME常駐シーンは廃止（練習時のみ演出）
+// game.js (改良7)
+// - 練習演出が出ない不具合修正：showRunScene()後にcanvas生成→init→start
+// - hero_idle.png の白背景を簡易クロマキーで透明化（練習演出）
+// - 休息演出 7秒固定
+// - チーム仕様変更：初期4人、枠8、勧誘で増える
+// - 勧誘：15人プール→毎ターン4人提示→その中から1人だけ勧誘→成否に関わらずターン終了
+// - 勧誘成功率：学校prestige × 主人公totalPower
+// - “レアだが必ず成功” を1名
 
 (function () {
   const KEY = "sd_save_v1";
@@ -13,29 +13,38 @@
   // ----------------------------
   // Assets
   // ----------------------------
-  const HERO_PORTRAIT_SRC = "./assets/hero_portrait.png"; // HOME枠（顔）
-  const HERO_RUN_SPRITE_SRC = "./assets/hero_idle.png";   // 走る演出（練習/大会）
+  const HERO_PORTRAIT_SRC = "./assets/hero_portrait.png"; // HOME枠（主人公顔）
+  const HERO_RUN_SPRITE_SRC = "./assets/hero_idle.png";   // 走る演出（練習・大会）
 
-  // hero_idle.png のスプライト想定（必要なら後で調整）
+  // 通常キャラ：使い回し（あなたが assets に置いたら生きる）
+  const NORMAL_PORTRAITS = [
+    "./assets/portraits/normal_01.png",
+    "./assets/portraits/normal_02.png",
+    "./assets/portraits/normal_03.png",
+    "./assets/portraits/normal_04.png",
+  ];
+  const NORMAL_RUNNERS = [
+    "./assets/runners/normal_run_01.png",
+    "./assets/runners/normal_run_02.png",
+    "./assets/runners/normal_run_03.png",
+    "./assets/runners/normal_run_04.png",
+  ];
+
+  // hero_idle.png のスプライト想定
   const SPRITE_COLS = 8;
   const SPRITE_ROWS = 4;
-  const RUN_ROW_INDEX = 0; // 0始まり。違う行ならここだけ変える。
+  const RUN_ROW_INDEX = 0; // 0行目を走りとして扱う
 
   // ----------------------------
   // Save / Load
   // ----------------------------
-  function save(state) {
-    localStorage.setItem(KEY, JSON.stringify(state));
-  }
+  function save(state) { localStorage.setItem(KEY, JSON.stringify(state)); }
   function load() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     try { return JSON.parse(raw); } catch { return null; }
   }
-  function hardReset() {
-    localStorage.removeItem(KEY);
-    location.reload();
-  }
+  function hardReset() { localStorage.removeItem(KEY); location.reload(); }
 
   // ----------------------------
   // Default State
@@ -43,6 +52,11 @@
   function defaultState() {
     const rarity = "normal";
     const stats = SD_DATA.genStatsByGrade(1, rarity);
+
+    // 初期8→4
+    let team = SD_DATA.makeTeamMembers();
+    if (!Array.isArray(team)) team = [];
+    team = team.slice(0, 4);
 
     return {
       player: {
@@ -55,11 +69,14 @@
         formBonusActive: false,
         retired: false
       },
-      team: SD_DATA.makeTeamMembers(),
+      team,
       turn: {
         grade: 1,
         month: 4,
         term: 1, // 1=上旬,2=中旬,3=下旬
+      },
+      school: {
+        prestige: 18, // 学校成績(0..100)。大会/イベントで将来伸びる想定
       },
       nextMeet: {
         name: "新人戦 地区大会",
@@ -69,6 +86,11 @@
         campSummer: false,
         campWinter: false,
         allJapanCamp: false,
+      },
+      // 勧誘
+      recruit: {
+        usedThisTurn: false,
+        lastOfferedIds: [], // そのターンに提示した4人
       },
       lastEvent: ""
     };
@@ -89,6 +111,13 @@
       m.pow = SD_DATA.totalPower(m.stats);
       m.tag = SD_DATA.personalityTag(m.stats);
     }
+  }
+
+  function totalPowerFromStats(stats) {
+    // SD_DATA.totalPower があればそれを使う。なければ簡易。
+    if (SD_DATA && typeof SD_DATA.totalPower === "function") return SD_DATA.totalPower(stats || {});
+    const s = stats || {};
+    return (s.SPD||0)+(s.ACC||0)+(s.POW||0)+(s.TEC||0)+(s.STA||0)+(s.MEN||0);
   }
 
   // ----------------------------
@@ -115,7 +144,7 @@
 
     const s = state.player.stats;
     const pairs = Object.entries(s).sort((a,b)=>a[1]-b[1]);
-    const weakest = pairs[0][0];
+    const weakest = pairs[0]?.[0];
     const hint = {
       SPD:"スピード", ACC:"加速", POW:"パワー", TEC:"技術", STA:"持久力", MEN:"メンタル"
     }[weakest] || "基礎";
@@ -241,13 +270,8 @@
       p.fatigue = SD_DATA.clamp(p.fatigue + base.fatigue + extra, 0, 100);
     }
 
-    if (injuryRoll(state, action)) {
-      applyInjury(state);
-    }
-
-    if (!p.retired && p.fatigue >= 100) {
-      applyInjury(state);
-    }
+    if (injuryRoll(state, action)) applyInjury(state);
+    if (!p.retired && p.fatigue >= 100) applyInjury(state);
   }
 
   // ----------------------------
@@ -270,6 +294,10 @@
         for (const m of state.team) m.grade = Math.min(3, m.grade + 1);
       }
     }
+
+    // ターンごとのフラグ
+    state.recruit.usedThisTurn = false;
+    state.recruit.lastOfferedIds = [];
 
     state.lastEvent = "";
   }
@@ -342,18 +370,24 @@
   ];
 
   // ----------------------------
-  // Scene (Canvas) : practice中だけ使う（hero_idle.png表示）
+  // Scene (Canvas) : 練習中だけ生成・初期化
   // ----------------------------
-  function initScene() {
+  let SCENE = null;
+
+  function initSceneIfNeeded() {
     const canvas = document.getElementById("sceneCanvas");
     if (!canvas) return null;
     const ctx = canvas.getContext("2d");
-    const scene = makeSceneRenderer(canvas, ctx);
-    window.SD_SCENE = scene;
-    scene.start();
-    return scene;
+    if (!ctx) return null;
+
+    if (SCENE) return SCENE;
+
+    SCENE = makeSceneRenderer(canvas, ctx);
+    SCENE.start();
+    return SCENE;
   }
 
+  // --- sprite load + chroma key (white -> transparent) ---
   function loadImage(src) {
     return new Promise((resolve, reject) => {
       const img = new Image();
@@ -363,62 +397,52 @@
     });
   }
 
-  // 白っぽい背景を透明化（画像が透過済みなら実質ノーコスト）
-  async function buildTransparentSprite(img) {
-    const w = img.naturalWidth || img.width;
-    const h = img.naturalHeight || img.height;
+  // hero_idle.png が白背景でも「白だけ抜く」
+  async function makeChromaKeyedSprite(img) {
+    const off = document.createElement("canvas");
+    off.width = img.naturalWidth || img.width;
+    off.height = img.naturalHeight || img.height;
+    const octx = off.getContext("2d");
+    octx.drawImage(img, 0, 0);
 
-    const c = document.createElement("canvas");
-    c.width = w;
-    c.height = h;
-    const g = c.getContext("2d");
-    g.drawImage(img, 0, 0);
-
-    const im = g.getImageData(0, 0, w, h);
+    const im = octx.getImageData(0, 0, off.width, off.height);
     const d = im.data;
 
-    // ほぼ白(>=245)を透明化。輪郭の白ハイライトまで消えないように閾値は高め
+    // かなり白いピクセルを透明化（緩め）
     for (let i = 0; i < d.length; i += 4) {
-      const r = d[i], gg = d[i + 1], b = d[i + 2];
-      if (r >= 245 && gg >= 245 && b >= 245) {
-        d[i + 3] = 0;
+      const r = d[i], g = d[i+1], b = d[i+2], a = d[i+3];
+      if (a === 0) continue;
+      if (r >= 245 && g >= 245 && b >= 245) {
+        d[i+3] = 0;
       }
     }
-    g.putImageData(im, 0, 0);
+    octx.putImageData(im, 0, 0);
 
-    // createImageBitmapがあれば軽い
-    try {
-      if (window.createImageBitmap) {
-        const bmp = await createImageBitmap(c);
-        return bmp;
-      }
-    } catch {}
-    return c; // fallback
+    // offscreen canvas を「画像扱い」で返す
+    return off;
   }
 
   function makeSceneRenderer(canvas, ctx) {
     let raf = 0;
     let t = 0;
 
-    const runner = { x: 110, y: 0 };
-    let sprite = null; // ImageBitmap or Canvas
+    const runner = { x: 110, y: 290 };
+    let sprite = null;
     let spriteReady = false;
 
-    // 先に読み込み
     (async () => {
       try {
         const img = await loadImage(HERO_RUN_SPRITE_SRC);
-        sprite = await buildTransparentSprite(img);
+        sprite = await makeChromaKeyedSprite(img);
         spriteReady = true;
-      } catch (e) {
-        console.warn("sprite load failed", e);
+      } catch {
+        spriteReady = false;
       }
     })();
 
     function drawBackground() {
       const w = canvas.width, h = canvas.height;
 
-      // 明るめ
       const g = ctx.createLinearGradient(0, 0, 0, h);
       g.addColorStop(0, "rgba(235,240,255,1)");
       g.addColorStop(1, "rgba(210,220,245,1)");
@@ -426,14 +450,14 @@
       ctx.fillRect(0, 0, w, h);
 
       // コース
-      ctx.fillStyle = "rgba(220,60,60,0.18)";
-      ctx.fillRect(0, h * 0.55, w, h * 0.45);
+      ctx.fillStyle = "rgba(220,60,60,0.20)";
+      ctx.fillRect(0, h * 0.62, w, h * 0.38);
 
-      ctx.strokeStyle = "rgba(120,120,120,0.28)";
-      ctx.lineWidth = Math.max(1, Math.round(w * 0.002));
+      ctx.strokeStyle = "rgba(120,120,120,0.35)";
+      ctx.lineWidth = Math.max(1, Math.round(w * 0.003));
       const lanes = 4;
       for (let i = 0; i <= lanes; i++) {
-        const y = h * 0.63 + i * (h * 0.06);
+        const y = h * 0.70 + i * (h * 0.06);
         ctx.beginPath();
         ctx.moveTo(w * 0.08, y);
         ctx.lineTo(w * 0.92, y);
@@ -442,48 +466,28 @@
     }
 
     function drawRunnerSprite() {
-      const w = canvas.width, h = canvas.height;
+      if (!spriteReady || !sprite) return;
 
-      // 走者のyは画面高に追随
-      runner.y = Math.round(h * 0.58);
+      const sw = sprite.width / SPRITE_COLS;
+      const sh = sprite.height / SPRITE_ROWS;
 
-      // 横移動
-      runner.x += w * 0.004;
-      if (runner.x > w + w * 0.15) runner.x = -w * 0.15;
+      const frame = Math.floor((t * 0.30) % SPRITE_COLS); // 0..7
+      const sx = frame * sw;
+      const sy = RUN_ROW_INDEX * sh;
 
-      // スプライト
-      if (!spriteReady) return;
+      // 描画サイズ（スマホでも見える）
+      const scale = Math.max(2, Math.round(canvas.width / 420));
+      const dw = sw * scale;
+      const dh = sh * scale;
 
-      // フレーム計算
-      const sw = (sprite.width || sprite.naturalWidth || canvas.width);
-      const sh = (sprite.height || sprite.naturalHeight || canvas.height);
+      runner.x += 2.2 * scale;
+      if (runner.x > canvas.width + dw) runner.x = -dw;
 
-      const frameW = Math.floor(sw / SPRITE_COLS);
-      const frameH = Math.floor(sh / SPRITE_ROWS);
+      const dx = runner.x;
+      const dy = canvas.height * 0.70 - dh;
 
-      const frame = Math.floor((t * 0.25) % SPRITE_COLS);
-      const sx = frame * frameW;
-      const sy = RUN_ROW_INDEX * frameH;
-
-      // 表示サイズ：画面に対して見栄えよく（後で調整OK）
-      const scale = Math.max(1, Math.floor(Math.min(w / 900, h / 520) * 2));
-      const dw = frameW * scale * 0.55;
-      const dh = frameH * scale * 0.55;
-
-      // 影
-      ctx.fillStyle = "rgba(0,0,0,0.18)";
-      ctx.beginPath();
-      ctx.ellipse(runner.x + dw * 0.50, runner.y + dh * 0.92, dw * 0.35, dh * 0.08, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // ドット感
       ctx.imageSmoothingEnabled = false;
-
-      // 描画
-      ctx.drawImage(sprite, sx, sy, frameW, frameH, runner.x, runner.y - dh, dw, dh);
-
-      // 戻す
-      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(sprite, sx, sy, sw, sh, dx, dy, dw, dh);
     }
 
     function draw() {
@@ -513,7 +517,7 @@
     SD_UI.setCoachLine(coachLineForTurn(state));
     SD_UI.setAtmosphereText(atmosphereText(state));
 
-    // ★HOME枠：顔ドット（枠いっぱい）
+    // 主人公アイコン
     SD_UI.setHeroPortrait(HERO_PORTRAIT_SRC);
 
     recalcTeamPowers(state);
@@ -522,26 +526,25 @@
 
     save(state);
 
-    if (state.player.retired) {
-      SD_UI.showEndOverlay();
-    } else {
-      SD_UI.hideEndOverlay();
-    }
+    if (state.player.retired) SD_UI.showEndOverlay();
+    else SD_UI.hideEndOverlay();
   }
 
   // ----------------------------
-  // Flow: actions
+  // Flow: practice
   // ----------------------------
   async function runPracticeTurn(state, selectedIds) {
     if (state.player.retired) return;
 
-    // 画面いっぱい演出
+    // フルスクリーン演出
     SD_UI.showRunScene();
-    SD_UI.setSceneCaption("走る。息が熱い。");
-    SD_UI.setRunSceneText("練習中…");
+    SD_UI.setSceneCaption("練習。息が熱い。");
+    SD_UI.setRunSceneText("走る…（準備中）");
 
-    // 少し見せる（ターン進行の実感）
-    await new Promise(r => setTimeout(r, 900));
+    // ★重要：表示後に初期化（これで必ずcanvasが存在する）
+    initSceneIfNeeded();
+
+    await new Promise(r => setTimeout(r, 1200));
 
     const ids = Array.isArray(selectedIds) ? selectedIds : [];
     let idx = 1;
@@ -553,65 +556,233 @@
       if (state.player.retired) break;
     }
 
-    if (!state.player.retired) {
-      advanceTurn(state);
-    }
+    if (!state.player.retired) advanceTurn(state);
 
-    // 演出終了→HOME
     SD_UI.hideRunScene();
     SD_UI.setActiveView("home");
     refreshAll(state);
   }
 
-  function pickRestIntroCharacter(state) {
-    // レア優先。いなければ適当に1人。
-    const team = Array.isArray(state.team) ? state.team : [];
-    const rares = team.filter(m => m && m.rarity === "rare");
-    const pick = (rares.length ? rares : team)[SD_DATA.randInt(0, Math.max(0, (rares.length ? rares.length : team.length) - 1))];
-    if (!pick) return null;
-    return pick;
-  }
-
-  function buildRestIntroText(state, ch) {
-    const name = ch?.name || "スプリンター";
-    const grade = ch?.grade ? `${ch.grade}年` : "";
-    const tag = ch?.tag ? `（${ch.tag}）` : "";
-    const line1 = `人物名鑑：${name} ${tag}`;
-    const line2 = `${grade}　春風高校 陸上部。`;
-    const vibe = [
-      "静かに燃えるタイプ。練習量は裏切らない。",
-      "普段は飄々。だが勝負所だけ目が変わる。",
-      "ムードメーカー。緊張をほどくのが上手い。",
-      "フォームが綺麗。小さな積み重ねが武器。",
-    ][SD_DATA.randInt(0, 3)];
-    const line3 = vibe;
-    const line4 = "休息で回復した。次のターンへ。";
-    return { title: "休息", body: `${line1}\n${line2}\n${line3}\n\n${line4}` };
+  // ----------------------------
+  // Rest (7秒固定 + レア紹介)
+  // ----------------------------
+  function pickRestRare(state) {
+    // 休息演出の「レア紹介」：低確率で出す（飽き対策）
+    // ただし今は画像が揃ってない前提で、主人公ポートレートを流用しても成立するようにする
+    const roll = Math.random();
+    if (roll < 0.22) {
+      return {
+        title: "休息",
+        img: HERO_PORTRAIT_SRC,
+        body:
+          "人物名鑑：鏡城 レイ（加速型）\n" +
+          "3年　春風高校 陸上部。\n" +
+          "静かに燃えるタイプ。練習量は裏切らない。"
+      };
+    }
+    return {
+      title: "休息",
+      img: HERO_PORTRAIT_SRC,
+      body: "休息で回復した。次のターンへ。"
+    };
   }
 
   async function applyRestTurn(state) {
     if (state.player.retired) return;
 
-    // 休息演出（キャラ紹介風）
-    const ch = pickRestIntroCharacter(state);
-    const txt = buildRestIntroText(state, ch);
-
-    // 画像は今は hero_portrait を流用（のちに「rare_portrait_xx.png」等に差し替え可能）
-    SD_UI.showRestScene({
-      title: txt.title,
-      body: txt.body,
-      imgSrc: HERO_PORTRAIT_SRC,
-    });
-
-    await new Promise(r => setTimeout(r, 1100));
-
-    // 実処理
+    // 休息を適用→ターン進行（結果は背面で進める）
     applyTrainingOnce(state, "rest", 1);
     if (!state.player.retired) advanceTurn(state);
 
+    // 休息フルスクリーン（7秒固定）
+    const rare = pickRestRare(state);
+    SD_UI.showRestScene({ title: rare.title, body: rare.body, imgSrc: rare.img });
+    await new Promise(r => setTimeout(r, 7000));
     SD_UI.hideRestScene();
+
     SD_UI.setActiveView("home");
     refreshAll(state);
+  }
+
+  // ----------------------------
+  // Recruit: candidates pool (15)
+  // ----------------------------
+  const RECRUIT_POOL = [
+    // rare=false は通常。portrait/runner は使い回しが基本
+    { id:"n01", name:"西園 シン",  grade:1, type:"SPD", rarity:"normal", mustJoin:false, vibe:"短い加速で勝負する。", portraitIdx:0, runnerIdx:0 },
+    { id:"n02", name:"土岐 ユウ",  grade:1, type:"TEC", rarity:"normal", mustJoin:false, vibe:"フォームが綺麗で伸びしろ大。", portraitIdx:1, runnerIdx:1 },
+    { id:"n03", name:"羽柴 ケン",  grade:2, type:"POW", rarity:"normal", mustJoin:false, vibe:"直線が強い。筋力タイプ。", portraitIdx:2, runnerIdx:2 },
+    { id:"n04", name:"桐谷 ハル",  grade:2, type:"MEN", rarity:"normal", mustJoin:false, vibe:"本番に強い。波が少ない。", portraitIdx:3, runnerIdx:3 },
+    { id:"n05", name:"早乙女 ルカ",grade:1, type:"ACC", rarity:"normal", mustJoin:false, vibe:"スタートだけは誰にも負けない。", portraitIdx:0, runnerIdx:1 },
+    { id:"n06", name:"皆川 トオル",grade:2, type:"STA", rarity:"normal", mustJoin:false, vibe:"練習を休まない。基礎が硬い。", portraitIdx:1, runnerIdx:2 },
+    { id:"n07", name:"榊原 ソラ", grade:1, type:"SPD", rarity:"normal", mustJoin:false, vibe:"反応が鋭い。天性の勘。", portraitIdx:2, runnerIdx:3 },
+    { id:"n08", name:"三雲 タクミ",grade:3, type:"TEC", rarity:"normal", mustJoin:false, vibe:"走りの理屈を語れる。", portraitIdx:3, runnerIdx:0 },
+    { id:"n09", name:"篠崎 カイ", grade:2, type:"ACC", rarity:"normal", mustJoin:false, vibe:"爆発力。だがムラがある。", portraitIdx:0, runnerIdx:2 },
+    { id:"n10", name:"新田 リョウ", grade:1, type:"POW", rarity:"normal", mustJoin:false, vibe:"追い込みで伸びる。", portraitIdx:1, runnerIdx:3 },
+    { id:"n11", name:"神谷 ヒビキ",grade:3, type:"MEN", rarity:"normal", mustJoin:false, vibe:"勝負所で顔色が変わらない。", portraitIdx:2, runnerIdx:0 },
+    { id:"n12", name:"水無月 シュン",grade:2,type:"STA", rarity:"normal", mustJoin:false, vibe:"淡々と積む。夏に強い。", portraitIdx:3, runnerIdx:1 },
+
+    // rare（少なめ）
+    { id:"r01", name:"黒瀬 アキト", grade:2, type:"SPD", rarity:"rare", mustJoin:false, vibe:"“100mだけ”なら全国級。", portraitSrc:"./assets/portraits/rare_r01.png", runnerSrc:"./assets/runners/rare_r01_run.png" },
+    { id:"r02", name:"天城 ナギ",     grade:1, type:"TEC", rarity:"rare", mustJoin:false, vibe:"フォームが芸術。撮られる男。", portraitSrc:"./assets/portraits/rare_r02.png", runnerSrc:"./assets/runners/rare_r02_run.png" },
+
+    // “レアだが必ず成功”
+    { id:"rg1", name:"白峰 レオ",     grade:3, type:"ACC", rarity:"rare", mustJoin:true, vibe:"ある条件で必ず味方になる。", portraitSrc:"./assets/portraits/rare_rg.png", runnerSrc:"./assets/runners/rare_rg_run.png" },
+  ];
+
+  function alreadyInTeam(state, id) {
+    return state.team.some(m => m && m.id === id);
+  }
+
+  function sampleRecruit4(state) {
+    const pool = RECRUIT_POOL.filter(c => !alreadyInTeam(state, c.id));
+    // シャッフル
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, 4);
+  }
+
+  function recruitSuccessProb(state, cand) {
+    if (cand.mustJoin) return 1.0;
+
+    const prestige = SD_DATA.clamp(state.school?.prestige ?? 0, 0, 100) / 100;
+    const pPow = SD_DATA.clamp(totalPowerFromStats(state.player.stats), 0, 600) / 600;
+
+    // 土台：学校×個人（バランス）
+    let base = 0.15 + (prestige * 0.45) + (pPow * 0.40); // 0.15..1.0程度
+
+    // レア補正（少し渋く）
+    if (cand.rarity === "rare") base -= 0.12;
+
+    // 下限/上限
+    base = SD_DATA.clamp(base, 0.05, 0.90);
+    return base;
+  }
+
+  function makeMemberFromCandidate(c) {
+    // SD_DATAのメンバー構造に寄せる（最低限の互換）
+    const rarity = c.rarity === "rare" ? "rare" : "normal";
+    const stats = SD_DATA.genStatsByGrade(c.grade || 1, rarity);
+
+    const m = {
+      id: c.id,
+      name: c.name,
+      grade: c.grade || 1,
+      rarity,
+      stats,
+      // 表示用
+      portrait:
+        c.portraitSrc ||
+        NORMAL_PORTRAITS[(c.portraitIdx ?? 0) % NORMAL_PORTRAITS.length],
+      runner:
+        c.runnerSrc ||
+        NORMAL_RUNNERS[(c.runnerIdx ?? 0) % NORMAL_RUNNERS.length],
+      vibe: c.vibe || "",
+    };
+    return m;
+  }
+
+  function renderRecruitCards(state, offered) {
+    const hint =
+      `学校成績 ${state.school.prestige}/100　/　勧誘は1ターン1人（成功・失敗でもターン終了）`;
+
+    const cards = offered.map((c) => {
+      const p = Math.round(recruitSuccessProb(state, c) * 100);
+      const rarityLabel = c.rarity === "rare" ? "レア" : "通常";
+      const must = c.mustJoin ? "（確定成功）" : "";
+      const img =
+        c.portraitSrc ||
+        NORMAL_PORTRAITS[(c.portraitIdx ?? 0) % NORMAL_PORTRAITS.length];
+
+      return `
+        <div style="background:#fff; border:1px solid rgba(0,0,0,0.10); border-radius:14px; padding:12px; display:flex; gap:12px; align-items:flex-start;">
+          <div style="width:76px; height:76px; background:#f1f3f8; border-radius:10px; border:1px solid rgba(0,0,0,0.08); display:flex; align-items:center; justify-content:center;">
+            <img src="${img}" style="max-width:100%; max-height:100%; image-rendering:pixelated;" alt="p">
+          </div>
+          <div style="flex:1;">
+            <div style="font-weight:900;">${c.name}（${c.grade}年 / ${rarityLabel}${must}）</div>
+            <div style="margin-top:6px; font-size:12px; opacity:0.85; white-space:pre-wrap;">${c.vibe}</div>
+            <div style="margin-top:8px; font-size:12px; opacity:0.75;">成功率目安：${p}%</div>
+            <button data-recruit-pick="${c.id}"
+              style="margin-top:10px; padding:10px 12px; border-radius:12px; border:1px solid rgba(0,0,0,0.12); background:#111; color:#fff; font-weight:900;">
+              勧誘する（このターン終了）
+            </button>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    SD_UI.showRecruitPanel({ hint, listHTML: cards });
+  }
+
+  async function doRecruitTurn(state, pickId) {
+    if (state.player.retired) return;
+    if (state.recruit.usedThisTurn) return;
+
+    const offeredIds = state.recruit.lastOfferedIds || [];
+    if (!offeredIds.includes(pickId)) return;
+
+    const cand = RECRUIT_POOL.find(c => c.id === pickId);
+    if (!cand) return;
+
+    state.recruit.usedThisTurn = true;
+
+    const prob = recruitSuccessProb(state, cand);
+    const success = Math.random() < prob;
+
+    if (success) {
+      if (state.team.length < 8) state.team.push(makeMemberFromCandidate(cand));
+      state.lastEvent = `勧誘成功：${cand.name}が入部した。`;
+      // 学校成績も少し上がる（勧誘が続く好循環）
+      state.school.prestige = SD_DATA.clamp((state.school.prestige ?? 0) + (cand.rarity === "rare" ? 2 : 1), 0, 100);
+    } else {
+      state.lastEvent = `勧誘失敗：${cand.name}には届かなかった。`;
+      // 失敗でも少しだけ学び（微増）
+      state.school.prestige = SD_DATA.clamp((state.school.prestige ?? 0) + 0, 0, 100);
+    }
+
+    // 成否に関わらずターン終了
+    advanceTurn(state);
+
+    // 結果は短い暗転で見せる（休息ほど長くない）
+    SD_UI.hideRecruitPanel();
+    SD_UI.showRestScene({
+      title: "勧誘",
+      body: `${state.lastEvent}\n次のターンへ。`,
+      imgSrc: cand.portraitSrc || NORMAL_PORTRAITS[(cand.portraitIdx ?? 0) % NORMAL_PORTRAITS.length],
+    });
+    await new Promise(r => setTimeout(r, 2200));
+    SD_UI.hideRestScene();
+
+    SD_UI.setActiveView("home");
+    refreshAll(state);
+  }
+
+  function openRecruit(state) {
+    if (state.player.retired) return;
+    if (showNameModalIfNeeded(state)) return;
+
+    // 今ターンの4人を確定
+    const offered = sampleRecruit4(state);
+    state.recruit.lastOfferedIds = offered.map(o => o.id);
+    save(state);
+
+    SD_UI.setActiveView("recruit");
+    renderRecruitCards(state, offered);
+
+    // ボタンにイベント
+    setTimeout(() => {
+      const btns = document.querySelectorAll("[data-recruit-pick]");
+      btns.forEach((b) => {
+        b.addEventListener("click", async () => {
+          const id = b.getAttribute("data-recruit-pick");
+          if (!id) return;
+          await doRecruitTurn(state, id);
+        }, { once: true });
+      });
+    }, 0);
   }
 
   // ----------------------------
@@ -640,6 +811,10 @@
         if (key === "rest") {
           if (state.player.retired) return;
           await applyRestTurn(state);
+          return;
+        }
+        if (key === "recruit") {
+          openRecruit(state);
           return;
         }
       });
@@ -678,12 +853,10 @@
     const resetBtn = document.getElementById("resetBtn");
 
     if (openNameBtn) {
-      openNameBtn.addEventListener("click", () => {
-        SD_UI.openNameModal();
-      });
+      openNameBtn.addEventListener("click", () => SD_UI.openNameModal());
     }
     if (resetBtn) {
-      resetBtn.addEventListener("click", () => {
+      resetBtn.addEventListener("二", () => {
         if (confirm("最初からやり直しますか？（ローカルデータを削除）")) hardReset();
       });
     }
@@ -692,9 +865,7 @@
   function wireEndOverlay() {
     const end = document.getElementById("endOverlay");
     if (!end) return;
-    end.addEventListener("click", () => {
-      hardReset();
-    });
+    end.addEventListener("click", () => hardReset());
   }
 
   // ----------------------------
@@ -705,9 +876,6 @@
     if (!state) state = defaultState();
 
     SD_UI.renderPracticeLists(PRACTICE_TEAM, PRACTICE_SOLO);
-
-    // scene init（runScenePanel内canvasを使う）
-    initScene();
 
     wireNameModal(state);
     showNameModalIfNeeded(state);
