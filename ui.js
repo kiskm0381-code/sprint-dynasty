@@ -1,4 +1,4 @@
-// ui.js (改良7)
+// ui.js (改良7 修正版)
 // - 練習/休息/勧誘をフルスクリーン演出として統一（HTML改修不要：DOM生成）
 // - 勧誘タブのハイライト対応
 // - HERO画像は枠いっぱい＆比率維持（歪み防止）
@@ -154,7 +154,8 @@
         (name === "home" && key === "home") ||
         (name === "practice" && key === "practice") ||
         (name === "settings" && key === "settings") ||
-        (name === "recruit" && key === "recruit");
+        (name === "recruit" && key === "recruit") ||
+        (name === "rest" && key === "rest");
       t.classList.toggle("is-active", !!active);
     });
   }
@@ -221,17 +222,15 @@
 
   // ---- HERO PORTRAIT（HOME枠）----
   function setHeroPortrait(src) {
-    // 既存HTMLにidが無いはずなので、左カードの最初のimgを取る
     let img = $("heroPortrait");
     if (!img) img = document.querySelector(".hero-card img") || document.querySelector("#viewHome img");
     if (!img) return;
 
     if (src) img.src = src;
 
-    // 枠いっぱい、歪み防止
     img.style.width = "100%";
     img.style.height = "100%";
-    img.style.objectFit = "contain"; // 比率維持（縦長化防止）
+    img.style.objectFit = "contain";
     img.style.imageRendering = "pixelated";
     img.style.display = "block";
     img.style.background = "transparent";
@@ -281,7 +280,6 @@
     const list = $("teamList");
     if (!list) return;
 
-    const arr = Array.isArray(team) ? team suggested : [];
     const members = Array.isArray(team) ? team : [];
     const slots = 8;
 
