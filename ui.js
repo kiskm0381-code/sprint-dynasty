@@ -1,5 +1,6 @@
-// ui.js (改良4)
+// ui.js (改良5)
 // 画面切替 + 練習UI + モーダル + ENDオーバーレイ
+// + ホームの主人公枠(img)に hero_portrait.png を差し込む機能追加
 
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -40,6 +41,30 @@
         || (name === "settings" && key === "settings");
       t.classList.toggle("is-active", !!active);
     });
+  }
+
+  // ---- hero portrait img ----
+  // できるだけ壊れにくい探索で「主人公枠のimg」を拾って src を差し替える
+  function findHeroImgEl() {
+    // 推奨：index.htmlで <img id="heroImage" ...> にしておくと確実
+    return (
+      $("heroImage")
+      || $("heroPortraitImg")
+      || document.querySelector("[data-hero-image]")
+      || document.querySelector(".hero-card img")
+      || document.querySelector("#viewHome img")
+      || document.querySelector("img")
+      || null
+    );
+  }
+
+  function setHeroImageSrc(src) {
+    const img = findHeroImgEl();
+    if (!img) return;
+    if (img.getAttribute("src") !== src) img.setAttribute("src", src);
+
+    // ドット絵が滲む場合の保険（CSS側でも可）
+    img.style.imageRendering = "pixelated";
   }
 
   // ---- modal ----
@@ -189,7 +214,6 @@
     if (!teamList || !soloList) return;
 
     function itemHTML(item) {
-      // item: { id, name, desc, tags: ["能力UP","疲労"] }
       const tags = (item.tags || []).map(t => `<span class="tag">${t}</span>`).join("");
       return `
         <label class="practice-item">
@@ -239,6 +263,9 @@
   window.SD_UI = {
     // view
     setActiveView,
+
+    // hero img
+    setHeroImageSrc,
 
     // modal
     openNameModal,
