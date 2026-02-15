@@ -1,5 +1,7 @@
-// game.js (改良4)
+// game.js (改良5)
 // 目的：
+// - HOMEの主人公枠は「顔ドット(hero_portrait.png)」を表示
+// - 走りスプライト(hero_run.png)は「練習/特殊練習/大会の演出」で使用（canvas）
 // - HOMEからシーンを削除（練習開始時だけ走る演出）
 // - 「次ターンへ」廃止：行動確定で自動進行
 // - 通常練習は上限なし（ただし疲労/怪我/逓減で制御）
@@ -7,6 +9,11 @@
 
 (function () {
   const KEY = "sd_save_v1";
+
+  // ---- assets ----
+  // ※assets整理後のファイル名に合わせています
+  const HERO_PORTRAIT_SRC = "./assets/hero_portrait.png"; // ホームの主人公枠（顔）
+  const HERO_RUN_SPRITE_SRC = "./assets/hero_run.png";     // 走り演出（練習/大会）
 
   // ----------------------------
   // Save / Load
@@ -127,16 +134,11 @@
   // ----------------------------
   // Training core (逓減 + 疲労 + 怪我)
   // ----------------------------
-
-  // 疲労が高いほど伸びが落ちる（最低35%まで）
   function trainingEfficiencyByFatigue(fatigue) {
-    // 0→1.00 / 50→0.75 / 80→0.55 / 100→0.35
     const eff = 1.0 - (fatigue * 0.0065);
     return SD_DATA.clamp(eff, 0.35, 1.00);
   }
 
-  // 同一ターン内の「やりすぎ逓減」
-  // n=1 → 1.00 / n=2 → 0.85 / n=3 → 0.72 / n=4 → 0.62 ... 下限0.45
   function diminishingByCount(n) {
     const v = Math.pow(0.85, Math.max(0, n - 1));
     return SD_DATA.clamp(v, 0.45, 1.0);
@@ -213,14 +215,12 @@
 
     if (!base) return;
 
-    // 成長倍率
     const fatigueEff = trainingEfficiencyByFatigue(p.fatigue);
     const growthEff = (p.growthTraits?.growth ?? 100) / 100;
     const diminish = diminishingByCount(withinTurnIndex);
 
     const mult = fatigueEff * growthEff * diminish;
 
-    // stats
     if (base.all) {
       for (const k of ["SPD","ACC","POW","TEC","STA","MEN"]) {
         s[k] = clampStat(s[k] + Math.max(0, Math.round(base.all * mult)));
@@ -231,14 +231,11 @@
       }
     }
 
-    // fatigue
     if (typeof base.fatigue === "number") {
-      // 連続実行ほど疲労が溜まりやすい（やりすぎ罰）
-      const extra = Math.max(0, withinTurnIndex - 2) * 2; // 3個目から+2,+4,+6...
+      const extra = Math.max(0, withinTurnIndex - 2) * 2;
       p.fatigue = SD_DATA.clamp(p.fatigue + base.fatigue + extra, 0, 100);
     }
 
-    // injury roll
     if (injuryRoll(state, action)) {
       applyInjury(state);
     }
@@ -325,7 +322,6 @@
   // ----------------------------
   // Practice definitions (仮)
   // ----------------------------
-  // ここは「原作に寄せる」ために、名称・説明・タグを整える
   const PRACTICE_TEAM = [
     { id:"tempo",  name:"リレー連携", desc:"技術と集中。気持ちも上がる。", tags:["能力UP"] },
     { id:"start",  name:"スタート練習（反復）", desc:"加速の型を身体に入れる。", tags:["能力UP","疲労"] },
@@ -342,34 +338,42 @@
 
   // ----------------------------
   // Scene (Canvas) : practice中だけ使う
+  // - 走りスプライト(hero_run.png)をアニメ表示
   // ----------------------------
   function initScene() {
     const canvas = document.getElementById("sceneCanvas");
     if (!canvas) return null;
     const ctx = canvas.getContext("2d");
-    const scene = makeSceneRenderer(canvas, ctx);
+    const scene = makeSceneRenderer(canvas, ctx, HERO_RUN_SPRITE_SRC);
     window.SD_SCENE = scene;
     scene.start();
     return scene;
   }
 
-  function makeSceneRenderer(canvas, ctx) {
+  function makeSceneRenderer(canvas, ctx, spriteSrc) {
     let raf = 0;
     let t = 0;
 
-    const runner = { x: 110, y: 290 };
+    const runner = { x: 110, y: 292 };
+
+    // sprite
+    const sprite = new Image();
+    sprite.src = spriteSrc;
+
+    // 「横に並んだフレーム」を想定（8コマをデフォルト）
+    // ※画像差し替えでコマ数を変えるならここだけ触る
+    const FRAMES = 8;
+    const FPS = 12;
 
     function drawBackground() {
       const w = canvas.width, h = canvas.height;
 
-      // 明るめ寄せ（暗すぎ改善）
       const g = ctx.createLinearGradient(0, 0, 0, h);
       g.addColorStop(0, "rgba(235,240,255,1)");
       g.addColorStop(1, "rgba(210,220,245,1)");
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, w, h);
 
-      // コース
       ctx.fillStyle = "rgba(220,60,60,0.20)";
       ctx.fillRect(0, 210, w, 170);
 
@@ -385,89 +389,56 @@
       }
     }
 
-    function drawRunner() {
-      const baseX = runner.x + (Math.sin(t * 0.02) * 2);
-      const baseY = runner.y + (Math.sin(t * 0.04) * 1.2);
+    function drawRunnerSprite() {
+      if (!sprite.complete || !sprite.naturalWidth) {
+        // 読み込み中
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.font = "14px system-ui, sans-serif";
+        ctx.fillText("loading...", 16, 24);
+        return;
+      }
 
-      runner.x += 1.2;
-      if (runner.x > canvas.width - 130) runner.x = 110;
+      // ピクセルアートを滲ませない
+      ctx.imageSmoothingEnabled = false;
 
-      const phase = t * 0.08;
-      const armA = Math.sin(phase) * 10;
-      const armB = Math.sin(phase + Math.PI) * 10;
-      const legA = Math.sin(phase + Math.PI/2) * 12;
-      const legB = Math.sin(phase + Math.PI/2 + Math.PI) * 12;
+      // フレーム計算（横並び）
+      const frameW = Math.floor(sprite.naturalWidth / FRAMES);
+      const frameH = sprite.naturalHeight;
 
+      // アニメーション
+      const frame = Math.floor((t / (60 / FPS)) % FRAMES);
+      const sx = frame * frameW;
+      const sy = 0;
+
+      // 位置移動（右へ流す）
+      runner.x += 1.6;
+      if (runner.x > canvas.width - 140) runner.x = 100;
+
+      const wobbleX = Math.sin(t * 0.08) * 1.0;
+      const wobbleY = Math.sin(t * 0.12) * 0.6;
+
+      // 表示サイズ（縮小して枠内に収める）
+      // ※必要ならここで倍率調整
+      const scale = 0.22; // 1536x1024でも扱えるように小さめ
+      const dw = Math.floor(frameW * scale);
+      const dh = Math.floor(frameH * scale);
+
+      const dx = Math.floor(runner.x + wobbleX);
+      const dy = Math.floor(runner.y - dh + wobbleY);
+
+      // 影
       ctx.fillStyle = "rgba(0,0,0,0.18)";
       ctx.beginPath();
-      ctx.ellipse(baseX+12, baseY+42, 16, 6, 0, 0, Math.PI*2);
+      ctx.ellipse(dx + dw * 0.5, runner.y + 16, dw * 0.42, 6, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.save();
-      ctx.translate(baseX, baseY);
-      ctx.rotate(-0.06);
-
-      // head
-      ctx.fillStyle = "rgba(255,255,255,0.95)";
-      ctx.beginPath();
-      ctx.arc(16, -6, 10, 0, Math.PI * 2);
-      ctx.fill();
-
-      // body (赤ユニ)
-      ctx.fillStyle = "rgba(220,40,40,0.92)";
-      ctx.beginPath();
-      ctx.roundRect(6, 6, 26, 22, 6);
-      ctx.fill();
-
-      ctx.strokeStyle = "rgba(30,30,30,0.35)";
-      ctx.lineWidth = 5;
-      ctx.lineCap = "round";
-
-      ctx.save();
-      ctx.translate(10, 10);
-      ctx.rotate((armA * Math.PI) / 180);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(-10, 12);
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.translate(28, 10);
-      ctx.rotate((armB * Math.PI) / 180);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(10, 12);
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.lineWidth = 6;
-
-      ctx.save();
-      ctx.translate(14, 28);
-      ctx.rotate((legA * Math.PI) / 180);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(-8, 18);
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.save();
-      ctx.translate(24, 28);
-      ctx.rotate((legB * Math.PI) / 180);
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(10, 18);
-      ctx.stroke();
-      ctx.restore();
-
-      ctx.restore();
+      ctx.drawImage(sprite, sx, sy, frameW, frameH, dx, dy, dw, dh);
     }
 
     function draw() {
       t += 1;
       drawBackground();
-      drawRunner();
+      drawRunnerSprite();
       raf = requestAnimationFrame(draw);
     }
 
@@ -488,6 +459,12 @@
     SD_UI.setNextMeet(nextMeetText(state));
     SD_UI.setPlayerName(state.player.name && state.player.name.trim() ? state.player.name : "（未設定）");
     SD_UI.setHeroMeta(`${state.player.grade}年 / 春風高校`);
+
+    // ★ホームの主人公枠は「顔ドット」を固定
+    if (SD_UI.setHeroImageSrc) {
+      SD_UI.setHeroImageSrc(HERO_PORTRAIT_SRC);
+    }
+
     SD_UI.setCoachLine(coachLineForTurn(state));
     SD_UI.setAtmosphereText(atmosphereText(state));
 
@@ -510,33 +487,27 @@
   async function runPracticeTurn(state, selectedIds) {
     if (state.player.retired) return;
 
-    // 演出表示
+    // 演出表示（走りスプライトをここで見せる）
     SD_UI.showRunScene();
     SD_UI.setSceneCaption("走る。息が熱い。");
     SD_UI.setRunSceneText("練習中…");
 
-    // 走る演出を少し見せる
     await new Promise(r => setTimeout(r, 900));
 
-    // 練習を順番に適用（上限なし）
     const ids = Array.isArray(selectedIds) ? selectedIds : [];
     let idx = 1;
     for (const id of ids) {
-      // 走る中のテキスト変化（気分）
       SD_UI.setRunSceneText(`練習中…（${idx}/${ids.length || 1}）`);
       applyTrainingOnce(state, id, idx);
       idx += 1;
-      // 連続感
       await new Promise(r => setTimeout(r, 120));
       if (state.player.retired) break;
     }
 
-    // ターンを進める
     if (!state.player.retired) {
       advanceTurn(state);
     }
 
-    // 演出消してHOMEへ
     SD_UI.hideRunScene();
     SD_UI.setActiveView("home");
     refreshAll(state);
@@ -544,7 +515,6 @@
 
   function applyRestTurn(state) {
     if (state.player.retired) return;
-    // 休息は1回行動として即進行
     applyTrainingOnce(state, "rest", 1);
     if (!state.player.retired) advanceTurn(state);
     SD_UI.setActiveView("home");
@@ -576,7 +546,6 @@
         }
         if (key === "rest") {
           if (state.player.retired) return;
-          // 休息は即実行→自動でターン進行
           applyRestTurn(state);
           return;
         }
@@ -600,8 +569,6 @@
         if (showNameModalIfNeeded(state)) return;
 
         const ids = SD_UI.getSelectedPracticeIds();
-        // 0件でも「やる気ゼロ」ターンとして進めたいならOKにするが、
-        // まずは最低1件要求のほうがゲームとして親切
         if (ids.length === 0) {
           SD_UI.setCoachLine("今日は何をやる？ 1つでもいい。選んでみよう。");
           return;
@@ -644,23 +611,19 @@
     let state = load();
     if (!state) state = defaultState();
 
-    // practice list render
     SD_UI.renderPracticeLists(PRACTICE_TEAM, PRACTICE_SOLO);
 
-    // scene init (practice用)
+    // ★練習用canvas（走り演出）
     initScene();
 
-    // modal
     wireNameModal(state);
     showNameModalIfNeeded(state);
 
-    // wires
     wireTabs(state);
     wirePractice(state);
     wireSettings(state);
     wireEndOverlay();
 
-    // initial view
     SD_UI.setActiveView("home");
     refreshAll(state);
   }
