@@ -1,12 +1,13 @@
-// ui.js
-// 改良4：通常練習の選択UI（複数選択・上限なし）＋スマホ対応
+// ui.js (改良4)
+// 画面切替 + 練習UI + モーダル + ENDオーバーレイ
+
 (function () {
   const $ = (id) => document.getElementById(id);
 
-  function forceShow(el) {
+  function forceShow(el, display = "flex") {
     if (!el) return;
     el.hidden = false;
-    el.style.display = "flex";
+    el.style.display = display;
     el.classList.add("is-open");
     el.setAttribute("aria-hidden", "false");
   }
@@ -19,11 +20,33 @@
     el.setAttribute("aria-hidden", "true");
   }
 
-  // ---- Name modal ----
+  // ---- views ----
+  function setActiveView(name) {
+    const views = {
+      home: $("viewHome"),
+      practice: $("viewPractice"),
+      settings: $("viewSettings"),
+    };
+    Object.entries(views).forEach(([k, el]) => {
+      if (!el) return;
+      el.classList.toggle("is-active", k === name);
+    });
+
+    const tabs = document.querySelectorAll(".tabbar .tab");
+    tabs.forEach((t) => {
+      const key = t.getAttribute("data-tab");
+      const active = (name === "home" && key === "home")
+        || (name === "practice" && key === "practice")
+        || (name === "settings" && key === "settings");
+      t.classList.toggle("is-active", !!active);
+    });
+  }
+
+  // ---- modal ----
   function openNameModal() {
     const back = $("nameModalBackdrop");
     const input = $("nameInput");
-    forceShow(back);
+    forceShow(back, "flex");
     setTimeout(() => {
       if (input) {
         input.focus();
@@ -33,27 +56,28 @@
   }
 
   function closeNameModal() {
-    forceHide($("nameModalBackdrop"));
+    const back = $("nameModalBackdrop");
     const input = $("nameInput");
+    forceHide(back);
     if (input) input.blur();
   }
 
-  // ---- Training modal ----
-  function openTrainingModal() {
-    forceShow($("trainingBackdrop"));
+  // ---- end overlay ----
+  function showEndOverlay() {
+    forceShow($("endOverlay"), "flex");
   }
-  function closeTrainingModal() {
-    forceHide($("trainingBackdrop"));
+  function hideEndOverlay() {
+    forceHide($("endOverlay"));
   }
 
-  // ---- Simple setters ----
+  // ---- text updates ----
   function setPlayerName(name) {
     const el = $("playerNameText");
     if (el) el.textContent = name || "（未設定）";
   }
 
-  function setPortraitSub(text) {
-    const el = $("portraitSub");
+  function setHeroMeta(text) {
+    const el = $("heroMetaText");
     if (el) el.textContent = text || "";
   }
 
@@ -84,38 +108,24 @@
     if (el) el.textContent = text || "";
   }
 
-  function setSceneTitle(text) {
-    const el = $("sceneTitle");
+  function setRunSceneText(text) {
+    const el = $("runSceneText");
     if (el) el.textContent = text || "";
   }
 
-  function setSprite(src) {
-    const el = $("playerSprite");
-    if (el && src) el.src = src;
-  }
-
-  // ---- Stats ----
-  const STAT_LABEL = {
-    SPD: "スピード",
-    ACC: "加速",
-    POW: "パワー",
-    TEC: "技術",
-    STA: "持久力",
-    MEN: "メンタル",
-  };
-
+  // ---- stats ----
   function renderStats(player) {
     const grid = $("statsGrid");
     if (!grid || !player) return;
 
     const stats = player.stats || {};
     const rows = [
-      ["SPD", stats.SPD],
-      ["ACC", stats.ACC],
-      ["POW", stats.POW],
-      ["TEC", stats.TEC],
-      ["STA", stats.STA],
-      ["MEN", stats.MEN],
+      ["スピード", stats.SPD],
+      ["加速", stats.ACC],
+      ["パワー", stats.POW],
+      ["技術", stats.TEC],
+      ["持久力", stats.STA],
+      ["メンタル", stats.MEN],
     ];
 
     grid.innerHTML = rows
@@ -124,7 +134,7 @@
         const pct = Math.max(0, Math.min(100, val));
         return `
           <div class="stat-row">
-            <div class="stat-key">${STAT_LABEL[k] || k}</div>
+            <div class="stat-key">${k}</div>
             <div class="stat-bar"><div class="stat-fill" style="width:${pct}%"></div></div>
             <div class="stat-val">${val}</div>
           </div>
@@ -172,72 +182,93 @@
     if (tp) tp.textContent = `${total}`;
   }
 
-  // ---- Training List (cards) ----
-  function renderTrainingLists(defs) {
-    // defs = { team:[], solo:[] }
-    const teamList = $("teamTrainingList");
-    const soloList = $("soloTrainingList");
+  // ---- practice list ----
+  function renderPracticeLists(defTeam, defSolo) {
+    const teamList = $("teamPracticeList");
+    const soloList = $("soloPracticeList");
     if (!teamList || !soloList) return;
 
-    function cardHtml(t) {
-      const tags = [];
-      if (t.tags?.includes("up")) tags.push(`<span class="tag">能力UP</span>`);
-      if (t.tags?.includes("fat")) tags.push(`<span class="tag tag-fat">疲労</span>`);
-      if (t.tags?.includes("slim")) tags.push(`<span class="tag tag-slim">軽め</span>`);
-
+    function itemHTML(item) {
+      // item: { id, name, desc, tags: ["能力UP","疲労"] }
+      const tags = (item.tags || []).map(t => `<span class="tag">${t}</span>`).join("");
       return `
-        <label class="tcard">
-          <input class="tcheck" type="checkbox" data-train-id="${t.id}">
-          <div class="tmeta">
-            <div class="tname">${t.name}</div>
-            <div class="tdesc">${t.desc}</div>
-            <div class="tchips">${tags.join("")}</div>
+        <label class="practice-item">
+          <input type="checkbox" data-practice-id="${item.id}">
+          <div class="practice-main">
+            <div class="practice-name">${item.name}</div>
+            <div class="practice-desc">${item.desc}</div>
+            <div class="practice-tags">${tags}</div>
           </div>
         </label>
       `;
     }
 
-    teamList.innerHTML = (defs.team || []).map(cardHtml).join("");
-    soloList.innerHTML = (defs.solo || []).map(cardHtml).join("");
+    teamList.innerHTML = (defTeam || []).map(itemHTML).join("");
+    soloList.innerHTML = (defSolo || []).map(itemHTML).join("");
   }
 
-  function getCheckedTrainingIds() {
-    const nodes = document.querySelectorAll('input[type="checkbox"][data-train-id]');
-    return Array.from(nodes).filter(n => n.checked).map(n => n.getAttribute("data-train-id"));
+  function getSelectedPracticeIds() {
+    const checks = document.querySelectorAll('input[type="checkbox"][data-practice-id]');
+    const ids = [];
+    checks.forEach((c) => {
+      if (c.checked) ids.push(c.getAttribute("data-practice-id"));
+    });
+    return ids.filter(Boolean);
   }
 
-  function setTrainingPreview(text, warn) {
-    const p = $("trainingPreview");
-    const w = $("trainingWarn");
-    if (p) p.textContent = text || "";
-    if (w) w.textContent = warn || "";
+  function clearPracticeChecks() {
+    const checks = document.querySelectorAll('input[type="checkbox"][data-practice-id]');
+    checks.forEach((c) => (c.checked = false));
   }
 
-  // Backdrop click to close (training only, name modal is controlled by buttons)
+  // ---- run scene panel ----
+  function showRunScene() {
+    forceShow($("runScenePanel"), "block");
+  }
+  function hideRunScene() {
+    forceHide($("runScenePanel"));
+  }
+
+  // backdrop click closes modal (safety)
   document.addEventListener("click", (e) => {
-    const tb = $("trainingBackdrop");
-    if (tb && e.target === tb) closeTrainingModal();
+    const back = $("nameModalBackdrop");
+    if (!back) return;
+    if (e.target === back) closeNameModal();
   });
 
   window.SD_UI = {
+    // view
+    setActiveView,
+
+    // modal
     openNameModal,
     closeNameModal,
-    openTrainingModal,
-    closeTrainingModal,
-    renderTrainingLists,
-    getCheckedTrainingIds,
-    setTrainingPreview,
 
+    // end overlay
+    showEndOverlay,
+    hideEndOverlay,
+
+    // text
     setPlayerName,
-    setPortraitSub,
+    setHeroMeta,
     setTurnText,
     setNextMeet,
     setCoachLine,
     setAtmosphereText,
     setSceneCaption,
-    setSceneTitle,
-    setSprite,
+    setRunSceneText,
+
+    // render
     renderStats,
     renderTeam,
+
+    // practice
+    renderPracticeLists,
+    getSelectedPracticeIds,
+    clearPracticeChecks,
+
+    // run scene
+    showRunScene,
+    hideRunScene,
   };
 })();
