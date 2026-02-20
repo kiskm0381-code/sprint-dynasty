@@ -21,6 +21,15 @@
     el.setAttribute("aria-hidden", "true");
   }
 
+  // ---- tab active ----
+  function setActiveTab(tabKey) {
+    const tabs = document.querySelectorAll(".tabbar .tab");
+    tabs.forEach((t) => {
+      const key = t.getAttribute("data-tab");
+      t.classList.toggle("is-active", key === tabKey);
+    });
+  }
+
   // ---- views ----
   function setActiveView(name) {
     const views = {
@@ -33,14 +42,11 @@
       el.classList.toggle("is-active", k === name);
     });
 
-    const tabs = document.querySelectorAll(".tabbar .tab");
-    tabs.forEach((t) => {
-      const key = t.getAttribute("data-tab");
-      const active = (name === "home" && key === "home")
-        || (name === "practice" && key === "practice")
-        || (name === "settings" && key === "settings");
-      t.classList.toggle("is-active", !!active);
-    });
+    // 既存の仕様：view切替に連動してタブも同期
+    // ただし rest/recruit は view が無いので setActiveTab を別途使う
+    if (name === "home" || name === "practice" || name === "settings") {
+      setActiveTab(name);
+    }
   }
 
   // ---- modal ----
@@ -319,6 +325,9 @@
   window.SD_UI = {
     // view
     setActiveView,
+
+    // tab
+    setActiveTab,
 
     // modal
     openNameModal,
