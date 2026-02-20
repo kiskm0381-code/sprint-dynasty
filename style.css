@@ -353,7 +353,7 @@ body{
   background: rgba(245,247,252,0.92);
   border-top:1px solid #d8deee;
   display:grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr); /* ★修正：5ボタンに合わせる */
   gap:10px;
   backdrop-filter: blur(10px);
 }
